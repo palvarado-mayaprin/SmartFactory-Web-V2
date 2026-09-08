@@ -1,0 +1,74 @@
+# ============================================
+# SMARTFACTORY WEB V2
+# Archivos excluidos del repositorio
+# ============================================
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+*.so
+
+# Entornos virtuales
+venv/
+.venv/
+env/
+ENV/
+
+# ---------- Variables / credenciales ----------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ---------- Logs ----------
+*.log
+logs/
+log/
+
+# ---------- IDE ----------
+.vscode/
+.idea/
+
+# ---------- Sistema operativo ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- Python testing / cache ----------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---------- Builds ----------
+build/
+dist/
+*.egg-info/
+
+# ---------- Temporales ----------
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# ---------- Node (si existiera) ----------
+node_modules/
+
+# ---------- Archivos comprimidos ----------
+*.zip
+*.rar
+*.7z
+
+# ---------- Bases de datos locales ----------
+*.db
+*.sqlite
+*.sqlite3
+
+# Plantillas de configuración permitidas
+!.env.example
+!.env.piloto.example

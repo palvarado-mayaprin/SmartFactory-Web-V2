@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SmartFactory · Mayaprin</title>
+    <link rel="stylesheet" href="/static/css/estilos.css">
+</head>
+<body>
+    <main class="app">
+        <section class="hero corporate-hero">
+            <div class="brand-zone">
+                <div class="brand-logo-card">
+                    <img src="/static/img/logo_mayaprin.png" alt="Mayaprin" class="brand-logo">
+                </div>
+                <div>
+                    <p class="eyebrow">SmartFactory Web · v20.9</p>
+                    <h1>Control operacional de planta</h1>
+                    <p class="subtitle">Sistema MES en tiempo real para marcajes, producción y trazabilidad.</p>
+                </div>
+            </div>
+            <div class="status-group corporate-status">
+                <div id="estadoSistema" class="status-pill">Backend pendiente</div>
+                <div id="estadoHuellaLocal" class="status-pill">Huella local pendiente</div>
+                <button id="btnOpcionesAvanzadas" class="small-action" onclick="abrirLoginUsuarioElevado()">Opciones avanzadas</button>
+                <button id="btnCancelarUsuarioElevado" class="small-action danger-light hidden" onclick="cerrarSesionUsuarioElevado()">Salir modo elevado</button>
+            </div>
+        </section>
+
+        <button id="btnCancelarFlujo" class="floating-cancel" onclick="cancelarFlujoOperativo()" title="Limpiar pantalla e iniciar de nuevo">
+            Cancelar
+        </button>
+
+        <section class="layout">
+            <aside class="steps">
+                <div class="step active" id="stepUsuario">1 · Usuario</div>
+                <div class="step" id="stepOp">2 · Orden</div>
+                <div class="step" id="stepActividad">3 · Actividad</div>
+
+                <div id="panelUsuarioElevado" class="live-card hidden">
+                    <div class="live-header">
+                        <strong>Modo elevado</strong>
+                        <span id="tipoUsuarioElevado" class="ws-pill">NO</span>
+                    </div>
+                    <p class="live-note" id="detalleUsuarioElevado">Sin usuario elevado activo.</p>
+                </div>
+
+                <div class="live-card">
+                    <div class="live-header">
+                        <strong>Marcajes activos</strong>
+                        <span id="wsEstado" class="ws-pill">WS pendiente</span>
+                    </div>
+                    <p class="live-note">Marcajes abiertos actualmente en planta.</p>
+                    <div class="button-row compact-buttons">
+                        <button class="small-action" onclick="sincronizarMarcajesDesdeBd()">Sincronizar BD</button>
+                    </div>
+                    <div id="marcajesActivos" class="active-marks">
+                        <div class="empty-live">Sin marcajes activos.</div>
+                    </div>
+                </div>
+
+                <div class="live-card mqtt-card admin-only permission-hidden">
+                    <div class="live-header">
+                        <strong>MQTT en vivo</strong>
+                        <span id="mqttWsEstado" class="ws-pill">WS pendiente</span>
+                    </div>
+                    <p class="live-note" id="mqttEstadoTexto">MQTT detenido. Persistencia real controlada según configuración.</p>
+                    <div class="button-row compact-buttons">
+                        <button class="small-action" onclick="iniciarMqttLectura()">Conectar MQTT</button>
+                        <button class="small-action danger-light" onclick="detenerMqttLectura()">Detener</button>
+                    </div>
+                    <div id="mqttMensajes" class="mqtt-messages">
+                        <div class="empty-live">Sin mensajes MQTT recibidos.</div>
+                    </div>
+                </div>
+
+                <div class="live-card su-admin-only permission-hidden" id="panelHerramientasSoporte">
+                    <div class="live-header">
+                        <strong>Herramientas soporte</strong>
+                        <span class="ws-pill">SU</span>
+                    </div>
+                    <p class="live-note">Visible para usuarios SU y ADMIN. En esta fase solo valida la visibilidad por permisos.</p>
+                </div>
+
+                <div class="live-card admin-only permission-hidden" id="panelHerramientasAdmin">
+                    <div class="live-header">
+                        <strong>Administración</strong>
+                        <span class="ws-pill">ADMIN</span>
+                    </div>
+                    <p class="live-note">Visible únicamente para administradores. Aquí se colocarán configuración, MQTT y diagnósticos.</p>
+                </div>
+
+            </aside>
+
+            <section class="panel">
+                <div class="card" id="cardUsuario">
+                    <h2>1. Identificar usuario</h2>
+                    <p>Coloque su huella en el lector DigitalPersona para iniciar o cerrar su operación.</p>
+
+                    <div class="button-row">
+                        <button onclick="identificarConHuellaLocal()">Identificar con huella</button>
+                    </div>
+
+                    <div class="manual-identification-admin admin-only permission-hidden">
+                        <label for="codigoUsuario">Código de usuario</label>
+                        <input id="codigoUsuario" type="text" placeholder="Ejemplo: M2013" autocomplete="off">
+                        <div class="button-row">
+                            <button class="secondary-action" onclick="identificarUsuario()">Identificar manual</button>
+                        </div>
+                        <p class="small-note">Herramienta administrativa para soporte o contingencia.</p>
+                    </div>
+                </div>
+
+                <div class="card hidden" id="cardCerrarMarcajeUsuario">
+                    <h2>Marcaje activo detectado</h2>
+                    <p>Este usuario ya tiene un marcaje abierto. Seleccione cómo desea reportar el cierre de su participación.</p>
+
+                    <div class="info-box warning-box" id="infoMarcajeActivoUsuario"></div>
+
+                    <label for="tipoCierreMarcaje">Tipo de cierre</label>
+                    <select id="tipoCierreMarcaje">
+                        <option value="FINAL">Finalización de actividad</option>
+                        <option value="MD">Reporte parcial con detenimiento de máquina</option>
+                        <option value="MT">Reporte parcial sin detenimiento de máquina</option>
+                    </select>
+
+                    <label for="totalUsuarioCierre">Total reportado por usuario</label>
+                    <input id="totalUsuarioCierre" type="number" min="0" step="1" placeholder="Cantidad manual reportada por el operario">
+
+                    <div class="button-row">
+                        <button class="danger-action" onclick="ejecutarCierreRealMarcajeActivoDelUsuario()">Ejecutar cierre</button>
+                        <button class="secondary-action admin-only permission-hidden" onclick="cambiarUsuarioDesdeMarcajeActivo()">Identificar otro usuario</button>
+                    </div>
+                    <p class="small-note">FINAL/MD publican MQTT stop antes de cerrar en BD. MT conserva continuidad operacional para relevo.</p>
+                </div>
+
+
+
+                <div class="card hidden" id="cardRelevoMt">
+                    <h2>Relevo MT pendiente</h2>
+                    <p>La máquina continúa trabajando. Identifique al siguiente operario y abra el nuevo marcaje con la misma OP, recurso y actividad.</p>
+
+                    <div class="info-box warning-box" id="infoRelevoMt"></div>
+
+                    <div class="button-row">
+                        <button class="secondary-action" onclick="cancelarRelevoMt()">Cancelar relevo y continuar manual</button>
+                    </div>
+                    <p class="small-note">Al identificar al siguiente operario, el sistema abrirá automáticamente el marcaje de relevo reutilizando OP, recurso y actividad.</p>
+                </div>
+
+                <div class="card hidden" id="cardOp">
+                    <h2>2. Ingresar orden de producción</h2>
+                    <div class="info-box" id="infoUsuario"></div>
+
+                    <label for="numOp">Número de OP</label>
+                    <input id="numOp" type="text" placeholder="Ejemplo: 42150" autocomplete="off">
+
+                    <button onclick="buscarOp()">Buscar OP</button>
+                    
+                    <div id="selectorTiempoImproductivo">
+                        <label for="timpoImproductivo">Tiempo Improductivo</label>
+                        <select id="ImproductivoSelect">
+                            <option value="COMIDA">Tiempo de Comida</option>
+                            <option value="MANTO">Mantenimiento Preventivo</option>
+                            <option value="FALLA">Falla/Emergencia</option>
+                            <option value="CAMBIO">Cambio de Motivo</option>
+                        </select>
+                    </div>
+
+                    <button onclick="SeleccionarRecurso()">Marcar Tiempo Improductivo</button>
+
+                    <div id="selectorRecursoTiempoImproductivo" class="hidden">
+                        <label for="recursoSelectImproductivo">Recurso / centro de costo</label>
+                        <select id="recursoSelectImproductivo" onchange="marcajeTiempoImproductivo()"></select
+                        ></div>
+                </div>
+
+                <div class="card hidden" id="cardActividad">
+                    <h2>3. Seleccionar actividad</h2>
+                    <div class="info-box" id="infoOrden"></div>
+
+                    <div id="selectorRecurso" class="hidden">
+                        <label for="recursoSelect">Recurso / centro de costo</label>
+                        <select id="recursoSelect" onchange="cargarActividadesPorRecurso()"></select>
+                    </div>
+
+                    <div class="activity-extra-toolbar">
+                        <button type="button" id="btnAgregarActividadNoCotizada" class="secondary-btn" onclick="abrirSelectorActividadNoCotizada()">
+                            Agregar actividad no cotizada
+                        </button>
+                    </div>
+
+                    <div id="actividades" class="activity-grid"></div>
+                </div>
+
+                <div class="card log-card admin-only permission-hidden">
+                    <h2>Eventos</h2>
+                    <div id="logEventos" class="log"></div>
+                </div>
+            </section>
+        </section>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
