@@ -1,0 +1,6 @@
+ main.py                     |   4 +-
+ readme/README_V20_19.md     |  59 ++++++++++++++
+ readme/README_V20_20.md     |  26 ++++++
+ services/cierres_service.py | 191 +++++++++++++++++++++++++++++++++++++++++++-
+ templates/index.html        |   2 +-
+ 5 files changed, 276 insertions(+), 6 deletions(-)

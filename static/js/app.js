@@ -270,6 +270,120 @@ async function simularCierreMarcajeActivoDelUsuario() {
 }
 
 
+function actividadEsArreglo(codigoActividad) {
+    return String(codigoActividad || "").toUpperCase().includes("ARR");
+}
+
+async function prepararTirajeMismaOrdenDespuesArreglo(contexto) {
+    if (!contexto?.usuario?.code || !contexto?.numOp || !contexto?.recurso) {
+        log("No se pudo reconstruir el contexto del arreglo cerrado para aperturar tiraje.", true);
+        return;
+    }
+
+    const confirmacion = await Swal.fire({
+        icon: "question",
+        title: "¿Desea aperturar tiraje de esta misma orden?",
+        text: `OP ${contexto.numOp} · Recurso ${contexto.recurso}`,
+        showCancelButton: true,
+        confirmButtonText: "Sí",
+        cancelButtonText: "No",
+        reverseButtons: true
+    });
+
+    if (!confirmacion.isConfirmed) {
+        log("Apertura de tiraje cancelada por el usuario.");
+        return;
+    }
+
+    try {
+        // Se heredan únicamente usuario, OP y recurso. La OP y sus actividades
+        // se reconstruyen nuevamente usando los endpoints normales del flujo.
+        usuarioActual = contexto.usuario;
+        document.getElementById("codigoUsuario").value = usuarioActual.code;
+        document.getElementById("infoUsuario").innerHTML = `
+            <strong>Usuario:</strong> ${usuarioActual.username || usuarioActual.code}<br>
+            <strong>Código:</strong> ${usuarioActual.code}<br>
+            <strong>Recurso:</strong> ${usuarioActual.resource || "Sin recurso"}
+        `;
+
+        const datos = await postJson("/api/op/buscar", {
+            num_op: contexto.numOp,
+            codigo_usuario: usuarioActual.code
+        });
+
+        ordenActual = datos.orden;
+
+        const recursosDisponibles = Array.isArray(datos.recursos) ? datos.recursos : [];
+        const recursoHeredadoExiste = recursosDisponibles.some(recurso => {
+            const codigo = typeof recurso === "string" ? recurso : recurso.codigo;
+            return String(codigo || "") === String(contexto.recurso);
+        });
+
+        if (!recursoHeredadoExiste) {
+            ordenActual = null;
+            recursoActual = null;
+            actividadesActuales = [];
+
+            document.getElementById("cardActividad")?.classList.add("hidden");
+            document.getElementById("cardOp")?.classList.remove("hidden");
+            document.getElementById("numOp").value = contexto.numOp;
+            activarPaso(2);
+
+            await Swal.fire({
+                icon: "warning",
+                title: "Recurso no disponible",
+                text: `El recurso ${contexto.recurso} del arreglo finalizado ya no está disponible para esta orden. Puede continuar utilizando el flujo normal de búsqueda de OP.`,
+                confirmButtonText: "Entendido"
+            });
+            log(`El recurso heredado ${contexto.recurso} no está disponible para la OP ${contexto.numOp}.`, true);
+            return;
+        }
+
+        recursoActual = contexto.recurso;
+
+        document.getElementById("infoOrden").innerHTML = `
+            <strong>OP:</strong> ${ordenActual.num_op}<br>
+            <strong>OT:</strong> ${ordenActual.num_ot}<br>
+            <strong>Descripción:</strong> ${ordenActual.descripcion}<br>
+            <strong>Cantidad:</strong> ${ordenActual.cantidad}<br>
+            <strong>Recurso sugerido:</strong> ${contexto.recurso}
+        `;
+
+        document.getElementById("cardOp")?.classList.remove("hidden");
+        document.getElementById("numOp").value = contexto.numOp;
+        document.getElementById("cardActividad")?.classList.remove("hidden");
+        prepararRecursos(recursosDisponibles, contexto.recurso);
+        activarPaso(3);
+
+        const datosActividades = await postJson("/api/actividades/recurso", {
+            num_ot: ordenActual.num_ot,
+            recurso: contexto.recurso
+        });
+
+        renderActividades(datosActividades.actividades);
+        log(`Tiraje preparado para OP ${contexto.numOp} en recurso ${contexto.recurso}. Seleccione la actividad a realizar.`);
+    } catch (error) {
+        log(`No se pudo preparar el tiraje de la misma orden: ${error.message}`, true);
+
+        // El cierre FINAL ya terminó correctamente. Ante cualquier error en este
+        // flujo posterior no se crea un nuevo marcaje ni se altera el cierre.
+        ordenActual = null;
+        recursoActual = null;
+        actividadesActuales = [];
+        document.getElementById("cardActividad")?.classList.add("hidden");
+        document.getElementById("cardOp")?.classList.remove("hidden");
+        document.getElementById("numOp").value = contexto.numOp;
+        activarPaso(2);
+
+        await Swal.fire({
+            icon: "error",
+            title: "No se pudo preparar el tiraje",
+            text: `${error.message}. El cierre anterior fue completado y puede continuar utilizando el flujo normal.`,
+            confirmButtonText: "Entendido"
+        });
+    }
+}
+
 async function ejecutarCierreRealMarcajeActivoDelUsuario() {
     if (!marcajeActivoUsuario) {
         log("No hay marcaje activo cargado para ejecutar cierre real.", true);
@@ -299,6 +413,15 @@ async function ejecutarCierreRealMarcajeActivoDelUsuario() {
         log("Cierre de marcaje cancelado por el usuario.", true);
         return;
     }
+
+    // Contexto mínimo para el flujo opcional posterior al cierre FINAL de un arreglo.
+    // Se captura antes de limpiar el estado del marcaje y nunca se usa para MT/MD.
+    const contextoArregloCerrado = {
+        usuario: usuarioActual ? { ...usuarioActual } : null,
+        numOp: marcajeActivoUsuario.numOp,
+        recurso: marcajeActivoUsuario.recurso,
+        actividad: marcajeActivoUsuario.actividad
+    };
 
     try {
         log(`Ejecutando cierre real ${tipoCierre} para OP ${marcajeActivoUsuario.numOp}...`);
@@ -347,6 +470,18 @@ async function ejecutarCierreRealMarcajeActivoDelUsuario() {
         } else {
             relevoMtPendiente = null;
             ocultarPanelRelevoMt();
+        }
+
+        // Solo después de completar exitosamente TODO el cierre FINAL se ofrece
+        // aperturar tiraje si el código de actividad contiene ARR (case-insensitive).
+        if (tipoCierre === "FINAL" && actividadEsArreglo(contextoArregloCerrado.actividad)) {
+            try {
+                await prepararTirajeMismaOrdenDespuesArreglo(contextoArregloCerrado);
+            } catch (errorPostCierre) {
+                // El flujo de tiraje es posterior y opcional: nunca debe convertir
+                // un cierre FINAL ya exitoso en un error de cierre para el usuario.
+                log(`Cierre FINAL completado, pero no se pudo abrir el flujo opcional de tiraje: ${errorPostCierre.message}`, true);
+            }
         }
     } catch (error) {
         log(error.message, true);
