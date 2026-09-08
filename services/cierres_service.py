@@ -1,11 +1,22 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
+import logging
+from pathlib import Path
 from typing import Any
 
 from db.conexion import dtbSmartFactory, dtbOptimus
 from config import ENABLE_REAL_DB_WRITES, ENABLE_REAL_MQTT_PUBLISH
 from services.marcajes_service import limpiar_sql
+
+
+logger = logging.getLogger(__name__)
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+LOG_DIR = BASE_DIR / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+LOG_CANTIDADREAL_NEGATIVA_FILE = LOG_DIR / "cantidadreal_negativos.log"
 
 
 TIPOS_CIERRE = {
@@ -17,6 +28,48 @@ TIPOS_CIERRE = {
 
 def _ahora_sql() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _serializar_json_seguro(valor: Any) -> str:
+    try:
+        return json.dumps(valor, ensure_ascii=False, default=str, indent=2)
+    except Exception:
+        return str(valor)
+
+
+def _log_cantidadreal_negativa(contexto: dict[str, Any]) -> None:
+    """
+    Registra un diagnóstico detallado cada vez que el cálculo de cantidadreal es negativo.
+    El fallo del propio log nunca debe interrumpir el cierre operativo.
+    """
+    try:
+        with LOG_CANTIDADREAL_NEGATIVA_FILE.open("a", encoding="utf-8") as archivo:
+            archivo.write("\n" + "=" * 120 + "\n")
+            archivo.write(
+                f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | ALERTA_CANTIDADREAL_NEGATIVA\n"
+            )
+            archivo.write(_serializar_json_seguro(contexto))
+            archivo.write("\n")
+    except Exception as error:
+        logger.error(f"Fallo al escribir log diagnóstico de cantidadreal negativa: {error}")
+
+
+def _consultar_diagnostico(query: str) -> dict[str, Any]:
+    """Ejecuta una consulta solo para diagnóstico sin afectar el flujo si falla."""
+    try:
+        resultado = dtbSmartFactory(query).consultaSmartFactory()
+        return {
+            "ok": True,
+            "query": query.strip(),
+            "resultado": resultado,
+        }
+    except Exception as error:
+        return {
+            "ok": False,
+            "query": query.strip(),
+            "resultado": None,
+            "error": str(error),
+        }
 
 
 def _mac_desde_topic(topic: str | None) -> str:
@@ -178,15 +231,107 @@ def _obtener_wo_tk(num_op: str, recurso: str, actividad: str) -> tuple[Any, Any,
     return 0, 0, query_recurso
 
 
-def _obtener_suma_mt_anterior(num_op: str, actividad: str) -> Any:
-    query = f"""
+def _construir_query_suma_mt_anterior(num_op: str, actividad: str) -> str:
+    return f"""
         SELECT SUM(cantidadreal)
         FROM smartfactory.resumenmarcajes
         WHERE actividad = '{limpiar_sql(actividad)}'
           AND numOp = '{limpiar_sql(num_op)}'
           AND estado = 'MT'
     """
-    return _consulta_un_valor(query, 0)
+
+
+def _obtener_suma_mt_anterior(num_op: str, actividad: str) -> Any:
+    return _consulta_un_valor(_construir_query_suma_mt_anterior(num_op, actividad), 0)
+
+
+def _obtener_diagnostico_cantidadreal_negativa(
+    *,
+    marcaje: dict[str, Any],
+    tipo_cierre: str,
+    total_usuario: Any,
+    num_op: str,
+    recurso: str,
+    actividad: str,
+    cantidad: Any,
+    username: str,
+    topic: str,
+    mac: str,
+    datos_cierre: dict[str, Any],
+    cantreal_original: Any,
+    suma_mt_anterior: Any,
+    cantreal_calculada: Any,
+    wo_number: Any,
+    tk_id: Any,
+    query_wo_tk: str,
+) -> dict[str, Any]:
+    mac_where = f" AND mac = '{limpiar_sql(mac)}'" if mac else ""
+
+    query_datossensados_detalle = f"""
+        SELECT *
+        FROM smartfactory.datossensados
+        WHERE numOp = '{limpiar_sql(num_op)}'
+          AND actividad = '{limpiar_sql(actividad)}'
+          {mac_where}
+        ORDER BY fechatiempo ASC
+    """
+
+    query_mt_detalle = f"""
+        SELECT *
+        FROM smartfactory.resumenmarcajes
+        WHERE actividad = '{limpiar_sql(actividad)}'
+          AND numOp = '{limpiar_sql(num_op)}'
+          AND estado = 'MT'
+        ORDER BY tiempoinicio ASC
+    """
+
+    return {
+        "evento": "ALERTA_CANTIDADREAL_NEGATIVA",
+        "fecha_diagnostico": _ahora_sql(),
+        "tipo_cierre": tipo_cierre,
+        "tipo_cierre_nombre": TIPOS_CIERRE.get(tipo_cierre),
+        "marcaje_recibido": marcaje,
+        "contexto_operativo": {
+            "numOp": num_op,
+            "recurso": recurso,
+            "actividad": actividad,
+            "cantidadcot": cantidad,
+            "username": username,
+            "topic": topic,
+            "mac": mac,
+            "totalUsuario": total_usuario,
+            "wo_number": wo_number,
+            "tk_id": tk_id,
+        },
+        "calculo_cantidadreal": {
+            "cantreal_original": cantreal_original,
+            "suma_mt_anterior": suma_mt_anterior,
+            "formula": f"{cantreal_original} - {suma_mt_anterior}",
+            "cantreal_calculada": cantreal_calculada,
+            "regla": "cantidadreal = ultimo cantpliegos de datossensados - SUM(cantidadreal de MT anteriores)",
+        },
+        "datos_cierre_datossensados": {
+            "cantreal": datos_cierre.get("cantreal"),
+            "tiempo_inicio": datos_cierre.get("tiempo_inicio"),
+            "tiempo_final": datos_cierre.get("tiempo_final"),
+            "duracion": datos_cierre.get("duracion"),
+            "query_calculo": str(datos_cierre.get("query") or "").strip(),
+            "estructura_tabla": _consultar_diagnostico("SHOW COLUMNS FROM smartfactory.datossensados"),
+            "detalle_completo": _consultar_diagnostico(query_datossensados_detalle),
+        },
+        "mt_anteriores": {
+            "suma_utilizada": suma_mt_anterior,
+            "query_suma": _construir_query_suma_mt_anterior(num_op, actividad).strip(),
+            "estructura_tabla": _consultar_diagnostico("SHOW COLUMNS FROM smartfactory.resumenmarcajes"),
+            "detalle_completo": _consultar_diagnostico(query_mt_detalle),
+            "nota": "La lógica vigente filtra MT por numOp + actividad + estado='MT'; no filtra recurso ni MAC.",
+        },
+        "optimus_wo_tk": {
+            "wo_number": wo_number,
+            "tk_id": tk_id,
+            "query": str(query_wo_tk or "").strip(),
+        },
+    }
 
 
 def _construir_mqtt_fin(num_op: str, recurso: str, actividad: str, cantidad: Any, tmp_begin: str, tmp_fin: str) -> str:
@@ -266,6 +411,46 @@ def simular_cierre_marcaje(marcaje: dict[str, Any], tipo_cierre: str, total_usua
     tmp_fin = datos_cierre["tiempo_final"]
     duracion = datos_cierre["duracion"]
     wo_number, tk_id, query_wo_tk = _obtener_wo_tk(num_op, recurso, actividad)
+
+    # Diagnóstico v20.20: solo se ejecutan consultas adicionales cuando la cantidadreal es negativa.
+    # El log es informativo y nunca altera, bloquea ni corrige el cierre.
+    try:
+        if float(cantreal_calculada) < 0:
+            logger.error(
+                "ANOMALIA: cantidadreal negativa (%s) para OP %s, MAC %s. "
+                "cantreal_original: %s, suma_mt_anterior: %s, tipo_cierre: %s, recurso: %s, actividad: %s",
+                cantreal_calculada,
+                num_op,
+                mac,
+                cantreal_original,
+                suma_mt_anterior,
+                tipo_cierre,
+                recurso,
+                actividad,
+            )
+            diagnostico_negativo = _obtener_diagnostico_cantidadreal_negativa(
+                marcaje=marcaje,
+                tipo_cierre=tipo_cierre,
+                total_usuario=total_usuario_limpio,
+                num_op=num_op,
+                recurso=recurso,
+                actividad=actividad,
+                cantidad=cantidad,
+                username=username,
+                topic=topic,
+                mac=mac,
+                datos_cierre=datos_cierre,
+                cantreal_original=cantreal_original,
+                suma_mt_anterior=suma_mt_anterior,
+                cantreal_calculada=cantreal_calculada,
+                wo_number=wo_number,
+                tk_id=tk_id,
+                query_wo_tk=query_wo_tk,
+            )
+            _log_cantidadreal_negativa(diagnostico_negativo)
+    except Exception as error:
+        # La trazabilidad no debe introducir una nueva causa de fallo en producción.
+        logger.error(f"Fallo al generar diagnóstico de cantidadreal negativa: {error}")
 
     mensaje_mqtt_fin = _construir_mqtt_fin(num_op, recurso, actividad, cantidad, tmp_begin, tmp_fin)
     publica_mqtt = tipo_cierre in {"FINAL", "MD"}

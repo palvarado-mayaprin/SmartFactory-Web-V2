@@ -22,7 +22,7 @@ from realtime.mqtt_websocket_manager import mqtt_ws_manager
 from services.marcajes_estado_service import listar_marcajes_activos_simulados
 from services.mqtt_service import mqtt_monitor
 
-app = FastAPI(title="SmartFactory Web", version="20.4.0")
+app = FastAPI(title="SmartFactory Web", version="20.20.0")
 
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
@@ -76,7 +76,7 @@ def inicio(request: Request):
 
 @app.get("/api/health")
 def health_check():
-    return {"ok": True, "version": "20.4.0", "mensaje": "SmartFactory Web funcionando"}
+    return {"ok": True, "version": "20.20.0", "mensaje": "SmartFactory Web funcionando"}
 
 
 
