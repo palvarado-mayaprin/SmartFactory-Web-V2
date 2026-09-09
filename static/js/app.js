@@ -384,14 +384,133 @@ async function prepararTirajeMismaOrdenDespuesArreglo(contexto) {
     }
 }
 
-async function ejecutarCierreRealMarcajeActivoDelUsuario() {
+async function ejecutarPausaPorActividadImproductiva() {
+    const inputTotal = document.getElementById("totalUsuarioCierre");
+    const totalIngresado = String(inputTotal?.value ?? "").trim();
+
+    if (totalIngresado === "") {
+        await Swal.fire({
+            icon: "warning",
+            title: "Cantidad realizada obligatoria",
+            text: "Ingrese la cantidad realizada antes de iniciar la pausa por actividad improductiva.",
+            confirmButtonText: "Entendido"
+        });
+        inputTotal?.focus();
+        return;
+    }
+
+    return ejecutarCierreRealMarcajeActivoDelUsuario({
+        tipoCierreForzado: "MD",
+        pausaImproductiva: true
+    });
+}
+
+async function seleccionarEIniciarTiempoImproductivoDespuesPausa(contexto) {
+    const nombresActividad = {
+        COMIDA: "Tiempo de Comida",
+        MANTO: "Mantenimiento Preventivo",
+        FALLA: "Falla/Emergencia",
+        CAMBIO: "Cambio de Motivo"
+    };
+
+    // Cada opción funciona como acción directa: al presionarla se cierra el cuadro
+    // y se intenta abrir inmediatamente el nuevo marcaje improductivo.
+    const actividad = await new Promise((resolve) => {
+        let resuelto = false;
+        const finalizar = (valor) => {
+            if (resuelto) return;
+            resuelto = true;
+            resolve(valor);
+        };
+
+        Swal.fire({
+            icon: "question",
+            title: "¿Qué tipo de tiempo improductivo quiere marcar?",
+            html: `
+                <div class="improductive-pause-options">
+                    <button type="button" class="improductive-pause-choice" data-actividad="COMIDA">Tiempo de Comida</button>
+                    <button type="button" class="improductive-pause-choice" data-actividad="MANTO">Mantenimiento Preventivo</button>
+                    <button type="button" class="improductive-pause-choice" data-actividad="FALLA">Falla/Emergencia</button>
+                    <button type="button" class="improductive-pause-choice" data-actividad="CAMBIO">Cambio de Motivo</button>
+                </div>
+            `,
+            showConfirmButton: false,
+            showCancelButton: true,
+            cancelButtonText: "Cancelar",
+            didOpen: () => {
+                document.querySelectorAll(".improductive-pause-choice").forEach((boton) => {
+                    boton.addEventListener("click", () => {
+                        const codigo = boton.dataset.actividad;
+                        finalizar(codigo);
+                        Swal.close();
+                    });
+                });
+            }
+        }).then((resultado) => {
+            if (resultado.isDismissed) {
+                finalizar(null);
+            }
+        });
+    });
+
+    if (!actividad) {
+        log("Cierre MD por pausa improductiva completado. El usuario canceló la apertura del tiempo improductivo.");
+        cancelarFlujoOperativo();
+        return;
+    }
+
+    const actividadNombre = nombresActividad[actividad] || actividad;
+
+    try {
+        log(`Iniciando automáticamente tiempo improductivo ${actividad} en recurso ${contexto.recurso}...`);
+
+        const datos = await postJson("/api/marcajes/iniciar-improductivo", {
+            num_op: "12345",
+            descripcion: "Tiempo Improductivo",
+            cantidad: "12345",
+            recurso: contexto.recurso,
+            actividad: actividad,
+            actividad_nombre: actividadNombre,
+            codigo_usuario: contexto.usuario.code
+        });
+
+        renderMarcajesActivos(datos.marcajes || []);
+        log(datos.mensaje || "Marcaje improductivo iniciado correctamente.");
+
+        await Swal.fire({
+            icon: "success",
+            title: "Tiempo improductivo iniciado",
+            html: `
+                <strong>Actividad:</strong> ${actividadNombre}<br>
+                <strong>Recurso:</strong> ${contexto.recurso}<br><br>
+                El marcaje improductivo fue abierto con el mismo usuario y recurso.
+            `,
+            confirmButtonText: "Entendido"
+        });
+
+        cancelarFlujoOperativo();
+    } catch (error) {
+        log(`El cierre MD fue completado, pero no se pudo iniciar el tiempo improductivo: ${error.message}`, true);
+        await Swal.fire({
+            icon: "error",
+            title: "No se pudo iniciar el tiempo improductivo",
+            text: `${error.message}. El cierre anterior ya fue completado y no será revertido.`,
+            confirmButtonText: "Entendido"
+        });
+        cancelarFlujoOperativo();
+    }
+}
+
+async function ejecutarCierreRealMarcajeActivoDelUsuario(opciones = {}) {
     if (!marcajeActivoUsuario) {
         log("No hay marcaje activo cargado para ejecutar cierre real.", true);
         return;
     }
 
-    const tipoCierre = document.getElementById("tipoCierreMarcaje").value;
-    const totalUsuario = document.getElementById("totalUsuarioCierre").value || 0;
+    const pausaImproductiva = Boolean(opciones.pausaImproductiva);
+    const tipoCierre = opciones.tipoCierreForzado || document.getElementById("tipoCierreMarcaje").value;
+    const valorTotalUsuario = String(document.getElementById("totalUsuarioCierre").value ?? "").trim();
+    const totalUsuario = valorTotalUsuario === "" ? 0 : valorTotalUsuario;
 
     const confirmacionCierre = await Swal.fire({
         icon: "warning",
@@ -423,13 +542,19 @@ async function ejecutarCierreRealMarcajeActivoDelUsuario() {
         actividad: marcajeActivoUsuario.actividad
     };
 
+    const contextoPausaImproductiva = pausaImproductiva ? {
+        usuario: usuarioActual ? { ...usuarioActual } : null,
+        recurso: marcajeActivoUsuario.recurso
+    } : null;
+
     try {
         log(`Ejecutando cierre real ${tipoCierre} para OP ${marcajeActivoUsuario.numOp}...`);
 
         const datos = await postJson("/api/marcajes/ejecutar-cierre-real", {
             marcaje: marcajeActivoUsuario,
             tipo_cierre: tipoCierre,
-            total_usuario: totalUsuario
+            total_usuario: totalUsuario,
+            pausa_improductiva: pausaImproductiva
         });
 
         log(datos.mensaje || "Cierre real ejecutado correctamente.");
@@ -470,6 +595,18 @@ async function ejecutarCierreRealMarcajeActivoDelUsuario() {
         } else {
             relevoMtPendiente = null;
             ocultarPanelRelevoMt();
+        }
+
+        // La pausa improductiva es un MD ya completado. Solo después de que el cierre
+        // terminó correctamente se ofrece seleccionar e iniciar el improductivo.
+        if (pausaImproductiva && contextoPausaImproductiva?.usuario && contextoPausaImproductiva?.recurso) {
+            try {
+                await seleccionarEIniciarTiempoImproductivoDespuesPausa(contextoPausaImproductiva);
+            } catch (errorPostCierre) {
+                log(`Cierre MD por pausa improductiva completado, pero falló el flujo posterior: ${errorPostCierre.message}`, true);
+                cancelarFlujoOperativo();
+            }
+            return;
         }
 
         // Solo después de completar exitosamente TODO el cierre FINAL se ofrece
@@ -1514,6 +1651,7 @@ conectarWebSocketMqtt();
 // expuestas explícitamente y además conectamos el botón por addEventListener.
 window.simularCierreMarcajeActivoDelUsuario = simularCierreMarcajeActivoDelUsuario;
 window.ejecutarCierreRealMarcajeActivoDelUsuario = ejecutarCierreRealMarcajeActivoDelUsuario;
+window.ejecutarPausaPorActividadImproductiva = ejecutarPausaPorActividadImproductiva;
 window.cambiarUsuarioDesdeMarcajeActivo = cambiarUsuarioDesdeMarcajeActivo;
 window.copiarTexto = copiarTexto;
 

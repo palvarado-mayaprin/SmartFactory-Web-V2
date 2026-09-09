@@ -354,7 +354,7 @@ def _separar_fecha_hora_para_mqtt(fechatiempo: str) -> tuple[str, str]:
         return ahora.strftime("%Y/%m/%d"), ahora.strftime("%H:%M:%S")
 
 
-def simular_cierre_marcaje(marcaje: dict[str, Any], tipo_cierre: str, total_usuario: Any) -> dict[str, Any]:
+def simular_cierre_marcaje(marcaje: dict[str, Any], tipo_cierre: str, total_usuario: Any, pausa_improductiva: bool = False) -> dict[str, Any]:
     """
     Simula el cierre de marcaje con las 3 rutas operativas:
     FINAL: finalización completa de actividad.
@@ -364,10 +364,17 @@ def simular_cierre_marcaje(marcaje: dict[str, Any], tipo_cierre: str, total_usua
     No ejecuta INSERT, DELETE ni publicación MQTT.
     """
     tipo_cierre = str(tipo_cierre or "").strip().upper()
+    pausa_improductiva = bool(pausa_improductiva)
     if tipo_cierre not in TIPOS_CIERRE:
         return {
             "ok": False,
             "mensaje": "Tipo de cierre inválido. Use FINAL, MD o MT.",
+        }
+
+    if pausa_improductiva and tipo_cierre != "MD":
+        return {
+            "ok": False,
+            "mensaje": "La pausa por actividad improductiva solo puede ejecutarse como cierre MD.",
         }
 
     num_op = limpiar_sql(marcaje.get("numOp") or marcaje.get("num_op"))
@@ -457,7 +464,16 @@ def simular_cierre_marcaje(marcaje: dict[str, Any], tipo_cierre: str, total_usua
 
     insert_usuario_estado = "NULL" if tipo_cierre == "FINAL" else f"'{tipo_cierre}'"
 
-    insert_resumen_usuario = f"""INSERT INTO smartfactory.resumenmarcajes
+    if pausa_improductiva:
+        insert_resumen_usuario = f"""INSERT INTO smartfactory.resumenmarcajes
+    (numOp, recurso, actividad, cantidadcot, cantidadreal, username, tiempoinicio, tiempofinal, estado, totalUsuario, wo_number, tk_id, duracion, variable01)
+VALUES
+    ('{num_op}', '{recurso}', '{actividad}', '{cantidad}', '{cantreal_calculada}', '{username}',
+     '{tmp_begin}', '{tmp_fin}', {insert_usuario_estado}, '{total_usuario_limpio}', '{limpiar_sql(wo_number)}', '{limpiar_sql(tk_id)}', '{duracion}', 1);"""
+    else:
+        # Mantener exactamente el INSERT histórico para FINAL/MD/MT normales.
+        # variable01 conserva su DEFAULT NULL al no incluirse en la sentencia.
+        insert_resumen_usuario = f"""INSERT INTO smartfactory.resumenmarcajes
     (numOp, recurso, actividad, cantidadcot, cantidadreal, username, tiempoinicio, tiempofinal, estado, totalUsuario, wo_number, tk_id, duracion)
 VALUES
     ('{num_op}', '{recurso}', '{actividad}', '{cantidad}', '{cantreal_calculada}', '{username}',
@@ -544,6 +560,8 @@ VALUES
                 "tk_id": tk_id,
                 "topic": topic,
                 "mac": mac,
+                "pausa_improductiva": pausa_improductiva,
+                "variable01": 1 if pausa_improductiva else None,
             },
             "nota": "v15 solamente simula el cierre. No ejecuta INSERT, DELETE ni publish MQTT.",
         },
@@ -551,7 +569,7 @@ VALUES
 
 
 
-def ejecutar_cierre_marcaje_real(marcaje: dict[str, Any], tipo_cierre: str, total_usuario: Any) -> dict[str, Any]:
+def ejecutar_cierre_marcaje_real(marcaje: dict[str, Any], tipo_cierre: str, total_usuario: Any, pausa_improductiva: bool = False) -> dict[str, Any]:
     """
     Ejecuta el cierre real del marcaje según las 3 rutas operativas:
     FINAL: cierre definitivo de actividad, inserta resumen usuario + resumen SMARTFACTORY estado F.
@@ -562,7 +580,7 @@ def ejecutar_cierre_marcaje_real(marcaje: dict[str, Any], tipo_cierre: str, tota
     - Requiere SMARTFACTORY_ENABLE_REAL_DB_WRITES=1 para modificar BD.
     - FINAL/MD requieren SMARTFACTORY_ENABLE_REAL_MQTT_PUBLISH=1 para publicar paro al ESP.
     """
-    simulacion = simular_cierre_marcaje(marcaje, tipo_cierre, total_usuario)
+    simulacion = simular_cierre_marcaje(marcaje, tipo_cierre, total_usuario, pausa_improductiva=pausa_improductiva)
 
     if not simulacion.get("ok"):
         return simulacion

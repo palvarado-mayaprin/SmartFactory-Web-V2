@@ -52,3 +52,4 @@ class SimularCierreMarcajeRequest(BaseModel):
     marcaje: dict = Field(..., description="Objeto marcaje activo que se desea cerrar")
     tipo_cierre: str = Field(..., min_length=1, description="FINAL, MD o MT")
     total_usuario: str | int | float | None = Field(0, description="Cantidad manual reportada por el usuario")
+    pausa_improductiva: bool = Field(False, description="True solo cuando el cierre MD proviene del botón PAUSA POR ACTIVIDAD IMPRODUCTIVA")

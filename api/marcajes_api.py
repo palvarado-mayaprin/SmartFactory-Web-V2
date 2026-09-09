@@ -252,6 +252,7 @@ def api_simular_cierre_marcaje(payload: SimularCierreMarcajeRequest):
         marcaje=payload.marcaje,
         tipo_cierre=payload.tipo_cierre,
         total_usuario=payload.total_usuario,
+        pausa_improductiva=payload.pausa_improductiva,
     )
 
     if not resultado["ok"]:
@@ -266,6 +267,7 @@ async def api_ejecutar_cierre_marcaje_real(payload: SimularCierreMarcajeRequest)
         marcaje=payload.marcaje,
         tipo_cierre=payload.tipo_cierre,
         total_usuario=payload.total_usuario,
+        pausa_improductiva=payload.pausa_improductiva,
     )
 
     if not resultado["ok"]:

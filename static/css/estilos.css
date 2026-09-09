@@ -268,6 +268,32 @@ button:hover {
     background: #1e293b;
 }
 
+.pause-improductive-action {
+    background: #d97706;
+    border: 2px solid #92400e;
+    box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.14);
+}
+
+.pause-improductive-action:hover {
+    background: #b45309;
+}
+
+.improductive-pause-options {
+    display: grid;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.improductive-pause-choice {
+    width: 100%;
+    margin-top: 0;
+    background: #334155;
+}
+
+.improductive-pause-choice:hover {
+    background: #1e293b;
+}
+
 .live-card {
     margin-top: 18px;
     background: white;

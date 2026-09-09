@@ -14,7 +14,7 @@
                     <img src="/static/img/logo_mayaprin.png" alt="Mayaprin" class="brand-logo">
                 </div>
                 <div>
-                    <p class="eyebrow">SmartFactory Web · v20.21</p>
+                    <p class="eyebrow">SmartFactory Web · v20.22</p>
                     <h1>Control operacional de planta</h1>
                     <p class="subtitle">Sistema MES en tiempo real para marcajes, producción y trazabilidad.</p>
                 </div>
@@ -129,9 +129,10 @@
 
                     <div class="button-row">
                         <button class="danger-action" onclick="ejecutarCierreRealMarcajeActivoDelUsuario()">Ejecutar cierre</button>
+                        <button class="pause-improductive-action" onclick="ejecutarPausaPorActividadImproductiva()">PAUSA POR ACTIVIDAD IMPRODUCTIVA</button>
                         <button class="secondary-action admin-only permission-hidden" onclick="cambiarUsuarioDesdeMarcajeActivo()">Identificar otro usuario</button>
                     </div>
-                    <p class="small-note">FINAL/MD publican MQTT stop antes de cerrar en BD. MT conserva continuidad operacional para relevo.</p>
+                    <p class="small-note">FINAL/MD publican MQTT stop antes de cerrar en BD. MT conserva continuidad operacional para relevo. La pausa improductiva ejecuta un MD y luego permite abrir un tiempo improductivo con el mismo usuario y recurso.</p>
                 </div>
 
 
