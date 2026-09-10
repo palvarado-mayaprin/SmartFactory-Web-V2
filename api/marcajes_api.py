@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
-from models.schemas import PrepararMarcajeRequest,PrepararMarcajeImproductivoRequest ,ActivarMarcajeSimuladoRequest, CerrarMarcajeSimuladoRequest, SimularCierreMarcajeRequest
+from models.schemas import PrepararMarcajeRequest, PrepararMarcajeImproductivoRequest, ActivarMarcajeSimuladoRequest, CerrarMarcajeSimuladoRequest, SimularCierreMarcajeRequest, UltimoResumenRecursoUsuarioRequest
 from services.marcajes_service import preparar_inicio_marcaje, simular_inicio_marcaje
 from services.marcajes_estado_service import (
     agregar_marcaje_simulado,
@@ -20,9 +20,22 @@ from services.persistencia_marcajes_service import (
     listar_marcajes_activos_bd,
 )
 from realtime.websocket_manager import manager
-from services.cierres_service import simular_cierre_marcaje, ejecutar_cierre_marcaje_real
+from services.cierres_service import simular_cierre_marcaje, ejecutar_cierre_marcaje_real, obtener_ultimo_resumen_recurso_usuario
 
 router = APIRouter(prefix="/api/marcajes", tags=["Marcajes"])
+
+
+@router.post("/ultimo-resumen-recurso-usuario")
+def api_ultimo_resumen_recurso_usuario(payload: UltimoResumenRecursoUsuarioRequest):
+    resultado = obtener_ultimo_resumen_recurso_usuario(
+        recurso=payload.recurso,
+        username=payload.username,
+    )
+
+    if not resultado.get("ok"):
+        raise HTTPException(status_code=500, detail=resultado.get("mensaje") or "No se pudo consultar el último resumen.")
+
+    return resultado
 
 
 @router.get("/modo-persistencia")

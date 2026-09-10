@@ -501,6 +501,163 @@ async function seleccionarEIniciarTiempoImproductivoDespuesPausa(contexto) {
     }
 }
 
+async function consultarContextoRetornoDespuesImproductivo(marcaje) {
+    if (String(marcaje?.numOp || "") !== "12345") {
+        return null;
+    }
+
+    const recurso = String(marcaje?.recurso || "").trim();
+    const username = String(marcaje?.username || usuarioActual?.code || "").trim();
+
+    if (!recurso || !username) {
+        log("No se pudo consultar el contexto previo del tiempo improductivo por falta de usuario o recurso.", true);
+        return null;
+    }
+
+    try {
+        const datos = await postJson("/api/marcajes/ultimo-resumen-recurso-usuario", {
+            recurso,
+            username
+        });
+
+        const registro = datos?.registro || null;
+        if (!datos?.encontrado || !registro) {
+            return null;
+        }
+
+        // Se evalúa exclusivamente el último registro devuelto por el query acordado.
+        // No se busca hacia atrás si variable01 no es 1.
+        if (Number(registro.variable01) !== 1) {
+            return null;
+        }
+
+        return {
+            usuario: username,
+            recurso: String(registro.recurso || recurso).trim(),
+            actividad: String(registro.actividad || "").trim(),
+            numOp: String(registro.numOp || "").trim()
+        };
+    } catch (error) {
+        // La consulta es auxiliar. Nunca debe impedir el cierre del improductivo.
+        log(`No se pudo consultar el marcaje productivo previo al improductivo: ${error.message}`, true);
+        return null;
+    }
+}
+
+async function reabrirActividadDespuesImproductivo(contexto) {
+    if (!contexto?.usuario || !contexto?.recurso || !contexto?.actividad || !contexto?.numOp) {
+        throw new Error("El registro anterior no contiene todos los datos necesarios para reabrir la actividad");
+    }
+
+    const confirmacion = await Swal.fire({
+        icon: "question",
+        title: "¿Desea continuar con la tarea?",
+        html: `
+            ¿Desea continuar con la tarea <strong>${contexto.actividad}</strong><br>
+            en el recurso <strong>${contexto.recurso}</strong><br>
+            de la orden <strong>${contexto.numOp}</strong>?
+        `,
+        showCancelButton: true,
+        confirmButtonText: "Sí, continuar",
+        cancelButtonText: "No",
+        reverseButtons: true
+    });
+
+    if (!confirmacion.isConfirmed) {
+        log("Tiempo improductivo cerrado. El usuario decidió no continuar con la actividad productiva anterior.");
+        cancelarFlujoOperativo();
+        return;
+    }
+
+    try {
+        // Reconstruir la orden y volver a validar recurso/actividad. No se heredan
+        // MAC, topic, contadores ni tiempos del marcaje anterior.
+        const datosOrden = await postJson("/api/op/buscar", {
+            num_op: contexto.numOp,
+            codigo_usuario: contexto.usuario
+        });
+
+        const orden = datosOrden?.orden;
+        if (!orden) {
+            throw new Error(`No se pudo reconstruir la orden ${contexto.numOp}`);
+        }
+
+        const recursos = Array.isArray(datosOrden.recursos) ? datosOrden.recursos : [];
+        const recursoValido = recursos.some((item) => {
+            const codigo = typeof item === "string" ? item : item?.codigo;
+            return String(codigo || "").trim() === contexto.recurso;
+        });
+
+        if (!recursoValido) {
+            throw new Error(`El recurso ${contexto.recurso} ya no está disponible para la orden ${contexto.numOp}`);
+        }
+
+        const datosCotizadas = await postJson("/api/actividades/recurso", {
+            num_ot: orden.num_ot,
+            recurso: contexto.recurso
+        });
+
+        let actividades = Array.isArray(datosCotizadas?.actividades) ? datosCotizadas.actividades : [];
+        let actividad = actividades.find((item) => String(item?.codigo || "").trim() === contexto.actividad);
+
+        if (!actividad) {
+            const datosNoCotizadas = await postJson("/api/actividades/no-cotizadas", {
+                num_ot: orden.num_ot,
+                recurso: contexto.recurso
+            });
+            actividades = Array.isArray(datosNoCotizadas?.actividades) ? datosNoCotizadas.actividades : [];
+            actividad = actividades.find((item) => String(item?.codigo || "").trim() === contexto.actividad);
+        }
+
+        if (!actividad) {
+            throw new Error(`La actividad ${contexto.actividad} ya no está disponible en el recurso ${contexto.recurso}`);
+        }
+
+        log(`Reabriendo automáticamente OP ${orden.num_op}, actividad ${actividad.codigo}, recurso ${contexto.recurso}...`);
+
+        const datosInicio = await postJson("/api/marcajes/iniciar-real-bd", {
+            num_op: orden.num_op,
+            num_ot: orden.num_ot,
+            descripcion: orden.descripcion,
+            cantidad: orden.cantidad,
+            recurso: contexto.recurso,
+            actividad: actividad.codigo,
+            actividad_nombre: actividad.nombre,
+            codigo_usuario: contexto.usuario
+        });
+
+        renderMarcajesActivos(datosInicio.marcajes || []);
+        log(datosInicio.mensaje || "Marcaje productivo reabierto correctamente.");
+
+        if (datosInicio.resultado_mqtt_inicio) {
+            const r = datosInicio.resultado_mqtt_inicio;
+            log(`MQTT inicio: ${r.mensaje || "sin mensaje"}${r.topic ? " · " + r.topic : ""}`, !r.ok);
+        }
+
+        await Swal.fire({
+            icon: "success",
+            title: "Actividad reanudada",
+            html: `
+                <strong>OP:</strong> ${orden.num_op}<br>
+                <strong>Actividad:</strong> ${actividad.nombre}<br>
+                <strong>Recurso:</strong> ${contexto.recurso}
+            `,
+            confirmButtonText: "Entendido"
+        });
+
+        cancelarFlujoOperativo();
+    } catch (error) {
+        log(`El tiempo improductivo fue cerrado, pero no se pudo reabrir la actividad anterior: ${error.message}`, true);
+        await Swal.fire({
+            icon: "error",
+            title: "No se pudo reanudar la actividad",
+            text: `${error.message}. El tiempo improductivo ya fue cerrado y no será revertido.`,
+            confirmButtonText: "Entendido"
+        });
+        cancelarFlujoOperativo();
+    }
+}
+
 async function ejecutarCierreRealMarcajeActivoDelUsuario(opciones = {}) {
     if (!marcajeActivoUsuario) {
         log("No hay marcaje activo cargado para ejecutar cierre real.", true);
@@ -511,6 +668,10 @@ async function ejecutarCierreRealMarcajeActivoDelUsuario(opciones = {}) {
     const tipoCierre = opciones.tipoCierreForzado || document.getElementById("tipoCierreMarcaje").value;
     const valorTotalUsuario = String(document.getElementById("totalUsuarioCierre").value ?? "").trim();
     const totalUsuario = valorTotalUsuario === "" ? 0 : valorTotalUsuario;
+
+    // Para OP 12345 se conserva el último resumen ANTES del cierre. Si se consultara
+    // después, el improductivo recién cerrado sería el registro más reciente.
+    const contextoRetornoImproductivo = await consultarContextoRetornoDespuesImproductivo(marcajeActivoUsuario);
 
     const confirmacionCierre = await Swal.fire({
         icon: "warning",
@@ -604,6 +765,19 @@ async function ejecutarCierreRealMarcajeActivoDelUsuario(opciones = {}) {
                 await seleccionarEIniciarTiempoImproductivoDespuesPausa(contextoPausaImproductiva);
             } catch (errorPostCierre) {
                 log(`Cierre MD por pausa improductiva completado, pero falló el flujo posterior: ${errorPostCierre.message}`, true);
+                cancelarFlujoOperativo();
+            }
+            return;
+        }
+
+        // Si se cerró un tiempo improductivo (OP 12345) y el último resumen previo
+        // del mismo usuario + recurso tenía variable01 = 1, ofrecer reanudar esa tarea.
+        // El cierre improductivo ya terminó; cualquier fallo aquí nunca lo revierte.
+        if (contextoRetornoImproductivo) {
+            try {
+                await reabrirActividadDespuesImproductivo(contextoRetornoImproductivo);
+            } catch (errorPostCierre) {
+                log(`Tiempo improductivo cerrado, pero falló el flujo de retorno a actividad: ${errorPostCierre.message}`, true);
                 cancelarFlujoOperativo();
             }
             return;

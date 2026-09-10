@@ -19,6 +19,11 @@ class ActividadesRequest(BaseModel):
     recurso: str = Field(..., min_length=1, description="Centro de costo/recurso seleccionado")
 
 
+class UltimoResumenRecursoUsuarioRequest(BaseModel):
+    recurso: str = Field(..., min_length=1, description="Recurso del marcaje improductivo que se está cerrando")
+    username: str = Field(..., min_length=1, description="Usuario del marcaje improductivo que se está cerrando")
+
+
 class PrepararMarcajeRequest(BaseModel):
     num_op: str = Field(..., min_length=1, description="Número de OP real/job")
     num_ot: str = Field(..., min_length=1, description="Número OT, normalmente OP + 01")

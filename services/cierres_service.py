@@ -26,6 +26,53 @@ TIPOS_CIERRE = {
 }
 
 
+def obtener_ultimo_resumen_recurso_usuario(recurso: str, username: str) -> dict[str, Any]:
+    """
+    Obtiene exactamente el último registro de resumenmarcajes para recurso + usuario.
+
+    Este método se consulta ANTES de cerrar un marcaje improductivo (OP 12345),
+    de modo que el registro recién cerrado no desplace al MD productivo que originó
+    la pausa. La decisión de reabrir se toma únicamente DESPUÉS de que el cierre
+    improductivo termine correctamente.
+    """
+    recurso_limpio = limpiar_sql(recurso)
+    username_limpio = limpiar_sql(username)
+
+    query = f"""
+        SELECT *
+        FROM smartfactory.resumenmarcajes
+        WHERE recurso = '{recurso_limpio}'
+          AND username = '{username_limpio}'
+        ORDER BY tiempofinal DESC
+        LIMIT 1
+    """
+
+    filas = dtbSmartFactory(query).consultaSmartFactory()
+    if not filas:
+        return {
+            "ok": True,
+            "encontrado": False,
+            "registro": None,
+        }
+
+    columnas_raw = dtbSmartFactory("SHOW COLUMNS FROM smartfactory.resumenmarcajes").consultaSmartFactory() or []
+    columnas = [str(fila[0]) for fila in columnas_raw if fila]
+    if not columnas:
+        return {
+            "ok": False,
+            "encontrado": False,
+            "registro": None,
+            "mensaje": "No fue posible identificar las columnas de resumenmarcajes.",
+        }
+
+    registro = dict(zip(columnas, filas[0]))
+    return {
+        "ok": True,
+        "encontrado": True,
+        "registro": registro,
+    }
+
+
 def _ahora_sql() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 

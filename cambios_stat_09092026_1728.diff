@@ -1,0 +1,10 @@
+ api/marcajes_api.py                           |   2 +
+ cambios_version_inicial_a_logs_negativos.diff | 368 --------------------------
+ main.py                                       |   4 +-
+ models/schemas.py                             |   1 +
+ readme/README_V20_22.md                       |  28 ++
+ services/cierres_service.py                   |  26 +-
+ static/css/estilos.css                        |  26 ++
+ static/js/app.js                              | 146 +++++++++-
+ templates/index.html                          |   5 +-
+ 9 files changed, 226 insertions(+), 380 deletions(-)
