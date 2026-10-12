@@ -471,7 +471,7 @@ async function seleccionarEIniciarTiempoImproductivoDespuesPausa(contexto) {
             recurso: contexto.recurso,
             actividad: actividad,
             actividad_nombre: actividadNombre,
-            codigo_usuario: contexto.usuario.code
+            codigo_usuario: contexto.codigoUsuario
         });
 
         renderMarcajesActivos(datos.marcajes || []);
@@ -704,7 +704,7 @@ async function ejecutarCierreRealMarcajeActivoDelUsuario(opciones = {}) {
     };
 
     const contextoPausaImproductiva = pausaImproductiva ? {
-        usuario: usuarioActual ? { ...usuarioActual } : null,
+        codigoUsuario: String(marcajeActivoUsuario.username || marcajeActivoUsuario.codigo_usuario || "").trim(),
         recurso: marcajeActivoUsuario.recurso
     } : null;
 
@@ -760,7 +760,7 @@ async function ejecutarCierreRealMarcajeActivoDelUsuario(opciones = {}) {
 
         // La pausa improductiva es un MD ya completado. Solo después de que el cierre
         // terminó correctamente se ofrece seleccionar e iniciar el improductivo.
-        if (pausaImproductiva && contextoPausaImproductiva?.usuario && contextoPausaImproductiva?.recurso) {
+        if (pausaImproductiva && contextoPausaImproductiva?.codigoUsuario && contextoPausaImproductiva?.recurso) {
             try {
                 await seleccionarEIniciarTiempoImproductivoDespuesPausa(contextoPausaImproductiva);
             } catch (errorPostCierre) {

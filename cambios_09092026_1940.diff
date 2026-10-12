@@ -1,0 +1,1192 @@
+diff --git a/api/marcajes_api.py b/api/marcajes_api.py
+index 52bc61a..890923f 100644
+--- a/api/marcajes_api.py
++++ b/api/marcajes_api.py
+@@ -1,6 +1,6 @@
+ from fastapi import APIRouter, HTTPException
+ 
+-from models.schemas import PrepararMarcajeRequest,PrepararMarcajeImproductivoRequest ,ActivarMarcajeSimuladoRequest, CerrarMarcajeSimuladoRequest, SimularCierreMarcajeRequest
++from models.schemas import PrepararMarcajeRequest, PrepararMarcajeImproductivoRequest, ActivarMarcajeSimuladoRequest, CerrarMarcajeSimuladoRequest, SimularCierreMarcajeRequest, UltimoResumenRecursoUsuarioRequest
+ from services.marcajes_service import preparar_inicio_marcaje, simular_inicio_marcaje
+ from services.marcajes_estado_service import (
+     agregar_marcaje_simulado,
+@@ -20,11 +20,24 @@ from services.persistencia_marcajes_service import (
+     listar_marcajes_activos_bd,
+ )
+ from realtime.websocket_manager import manager
+-from services.cierres_service import simular_cierre_marcaje, ejecutar_cierre_marcaje_real
++from services.cierres_service import simular_cierre_marcaje, ejecutar_cierre_marcaje_real, obtener_ultimo_resumen_recurso_usuario
+ 
+ router = APIRouter(prefix="/api/marcajes", tags=["Marcajes"])
+ 
+ 
++@router.post("/ultimo-resumen-recurso-usuario")
++def api_ultimo_resumen_recurso_usuario(payload: UltimoResumenRecursoUsuarioRequest):
++    resultado = obtener_ultimo_resumen_recurso_usuario(
++        recurso=payload.recurso,
++        username=payload.username,
++    )
++
++    if not resultado.get("ok"):
++        raise HTTPException(status_code=500, detail=resultado.get("mensaje") or "No se pudo consultar el último resumen.")
++
++    return resultado
++
++
+ @router.get("/modo-persistencia")
+ def api_modo_persistencia():
+     escritura_bd = esta_habilitada_escritura_real()
+diff --git a/cambios_09092026_1728.diff b/cambios_09092026_1728.diff
+new file mode 100644
+index 0000000..fa63078
+--- /dev/null
++++ b/cambios_09092026_1728.diff
+@@ -0,0 +1,788 @@
++diff --git a/api/marcajes_api.py b/api/marcajes_api.py
++index 93a5ead..52bc61a 100644
++--- a/api/marcajes_api.py
+++++ b/api/marcajes_api.py
++@@ -252,6 +252,7 @@ def api_simular_cierre_marcaje(payload: SimularCierreMarcajeRequest):
++         marcaje=payload.marcaje,
++         tipo_cierre=payload.tipo_cierre,
++         total_usuario=payload.total_usuario,
+++        pausa_improductiva=payload.pausa_improductiva,
++     )
++ 
++     if not resultado["ok"]:
++@@ -266,6 +267,7 @@ async def api_ejecutar_cierre_marcaje_real(payload: SimularCierreMarcajeRequest)
++         marcaje=payload.marcaje,
++         tipo_cierre=payload.tipo_cierre,
++         total_usuario=payload.total_usuario,
+++        pausa_improductiva=payload.pausa_improductiva,
++     )
++ 
++     if not resultado["ok"]:
++diff --git a/cambios_version_inicial_a_logs_negativos.diff b/cambios_version_inicial_a_logs_negativos.diff
++deleted file mode 100644
++index d0569fc..0000000
++--- a/cambios_version_inicial_a_logs_negativos.diff
+++++ /dev/null
++@@ -1,368 +0,0 @@
++-diff --git a/main.py b/main.py
++-index 67f4a40..8ea03fd 100644
++---- a/main.py
++-+++ b/main.py
++-@@ -22,7 +22,7 @@ from realtime.mqtt_websocket_manager import mqtt_ws_manager
++- from services.marcajes_estado_service import listar_marcajes_activos_simulados
++- from services.mqtt_service import mqtt_monitor
++- 
++--app = FastAPI(title="SmartFactory Web", version="20.4.0")
++-+app = FastAPI(title="SmartFactory Web", version="20.20.0")
++- 
++- app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
++- templates = Jinja2Templates(directory=BASE_DIR / "templates")
++-@@ -76,7 +76,7 @@ def inicio(request: Request):
++- 
++- @app.get("/api/health")
++- def health_check():
++--    return {"ok": True, "version": "20.4.0", "mensaje": "SmartFactory Web funcionando"}
++-+    return {"ok": True, "version": "20.20.0", "mensaje": "SmartFactory Web funcionando"}
++- 
++- 
++- 
++-diff --git a/readme/README_V20_19.md b/readme/README_V20_19.md
++-new file mode 100644
++-index 0000000..0d42c40
++---- /dev/null
++-+++ b/readme/README_V20_19.md
++-@@ -0,0 +1,59 @@
++-+# SmartFactory Web v20.19
++-+
++-+## Objetivo
++-+
++-+Agregar trazabilidad diagnóstica para investigar los casos esporádicos en los que el cálculo de `cantidadreal` resulta negativo al cerrar un marcaje.
++-+
++-+## Cambio implementado
++-+
++-+Se agregó un log independiente en:
++-+
++-+```text
++-+logs/cantidadreal_negativos.log
++-+```
++-+
++-+El log se genera únicamente cuando:
++-+
++-+```python
++-+cantreal_calculada < 0
++-+```
++-+
++-+No se modifica la fórmula actual, no se corrige automáticamente el valor y no se bloquea el cierre.
++-+
++-+## Información registrada
++-+
++-+Cada alerta conserva:
++-+
++-+- Fecha y hora del diagnóstico.
++-+- Modalidad de cierre: FINAL, MD o MT.
++-+- Diccionario completo del marcaje recibido.
++-+- `numOp`, recurso, actividad, cantidad cotizada, username, topic, MAC y totalUsuario.
++-+- `cantreal_original`.
++-+- `suma_mt_anterior`.
++-+- Fórmula exacta utilizada.
++-+- `cantreal_calculada`.
++-+- Tiempo inicial, tiempo final y duración obtenidos desde `datossensados`.
++-+- Query original utilizada para calcular los datos de cierre.
++-+- Todos los registros de `datossensados` de la misma OP + actividad + MAC.
++-+- Query utilizada para sumar cierres MT anteriores.
++-+- Todos los registros MT de `resumenmarcajes` considerados por la lógica vigente.
++-+- `wo_number`, `tk_id` y query de Optimus utilizada para obtenerlos.
++-+
++-+## Consideración de rendimiento
++-+
++-+Las consultas diagnósticas adicionales (`SELECT *` de `datossensados` y `resumenmarcajes`) solamente se ejecutan cuando el cálculo ya resultó negativo. El flujo normal de cierres positivos no recibe estas consultas adicionales.
++-+
++-+## Regla vigente observada
++-+
++-+La suma de MT anteriores continúa filtrándose por:
++-+
++-+```text
++-+numOp + actividad + estado = MT
++-+```
++-+
++-+y no por recurso o MAC. Este comportamiento no fue modificado en v20.19; se documenta y se registra en el log para poder determinar con evidencia si participa en la causa raíz.
++-+
++-+## Versionado
++-+
++-+- FastAPI: `20.19.0`
++-+- Interfaz: `v20.19`
++-diff --git a/readme/README_V20_20.md b/readme/README_V20_20.md
++-new file mode 100644
++-index 0000000..667ed3f
++---- /dev/null
++-+++ b/readme/README_V20_20.md
++-@@ -0,0 +1,26 @@
++-+# SmartFactory Web v20.20
++-+
++-+## Objetivo
++-+
++-+Ajuste posterior a revisión QA del diagnóstico de `cantidadreal` negativa.
++-+
++-+## Cambios
++-+
++-+- Se mantiene **sin modificación** la fórmula productiva existente de `cantidadreal` en `services/cierres_service.py`:
++-+  - `cantreal_calculada = cantreal_original - suma_mt_anterior`.
++-+- Se mantiene **sin modificación** el valor utilizado en el `INSERT` a `smartfactory.resumenmarcajes`, incluso si resulta negativo.
++-+- Se agrega `logger.error(...)` cuando se detecta `cantidadreal < 0`, con OP, MAC, valores de cálculo, tipo de cierre, recurso y actividad.
++-+- Se conserva el diagnóstico detallado en `logs/cantidadreal_negativos.log`.
++-+- Los fallos al escribir o construir el diagnóstico se registran con `logger.error(...)` y **no interrumpen el cierre operativo**.
++-+- Las consultas adicionales de diagnóstico continúan ejecutándose únicamente cuando el resultado es negativo.
++-+
++-+## Verificación sobre `api/mqtt_api.py`
++-+
++-+No se modificó este archivo. La comparación con la base anterior confirma que únicamente contiene los endpoints de inicio, detención y estado de MQTT. El cálculo de `cantidadreal` no se realiza allí.
++-+
++-+Tampoco existe en v20.19 ni en v20.20 un `max(0, cantidadreal...)` asociado al cierre.
++-+
++-+## Versión
++-+
++-+- FastAPI: `20.20.0`
++-+- Interfaz: `v20.20`
++-diff --git a/services/cierres_service.py b/services/cierres_service.py
++-index ff2a64b..24387ad 100644
++---- a/services/cierres_service.py
++-+++ b/services/cierres_service.py
++-@@ -1,6 +1,9 @@
++- from __future__ import annotations
++- 
++- from datetime import datetime
++-+import json
++-+import logging
++-+from pathlib import Path
++- from typing import Any
++- 
++- from db.conexion import dtbSmartFactory, dtbOptimus
++-@@ -8,6 +11,14 @@ from config import ENABLE_REAL_DB_WRITES, ENABLE_REAL_MQTT_PUBLISH
++- from services.marcajes_service import limpiar_sql
++- 
++- 
++-+logger = logging.getLogger(__name__)
++-+
++-+BASE_DIR = Path(__file__).resolve().parent.parent
++-+LOG_DIR = BASE_DIR / "logs"
++-+LOG_DIR.mkdir(exist_ok=True)
++-+LOG_CANTIDADREAL_NEGATIVA_FILE = LOG_DIR / "cantidadreal_negativos.log"
++-+
++-+
++- TIPOS_CIERRE = {
++-     "FINAL": "Finalización de actividad",
++-     "MD": "Reporte parcial con detenimiento de máquina",
++-@@ -19,6 +30,48 @@ def _ahora_sql() -> str:
++-     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
++- 
++- 
++-+def _serializar_json_seguro(valor: Any) -> str:
++-+    try:
++-+        return json.dumps(valor, ensure_ascii=False, default=str, indent=2)
++-+    except Exception:
++-+        return str(valor)
++-+
++-+
++-+def _log_cantidadreal_negativa(contexto: dict[str, Any]) -> None:
++-+    """
++-+    Registra un diagnóstico detallado cada vez que el cálculo de cantidadreal es negativo.
++-+    El fallo del propio log nunca debe interrumpir el cierre operativo.
++-+    """
++-+    try:
++-+        with LOG_CANTIDADREAL_NEGATIVA_FILE.open("a", encoding="utf-8") as archivo:
++-+            archivo.write("\n" + "=" * 120 + "\n")
++-+            archivo.write(
++-+                f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | ALERTA_CANTIDADREAL_NEGATIVA\n"
++-+            )
++-+            archivo.write(_serializar_json_seguro(contexto))
++-+            archivo.write("\n")
++-+    except Exception as error:
++-+        logger.error(f"Fallo al escribir log diagnóstico de cantidadreal negativa: {error}")
++-+
++-+
++-+def _consultar_diagnostico(query: str) -> dict[str, Any]:
++-+    """Ejecuta una consulta solo para diagnóstico sin afectar el flujo si falla."""
++-+    try:
++-+        resultado = dtbSmartFactory(query).consultaSmartFactory()
++-+        return {
++-+            "ok": True,
++-+            "query": query.strip(),
++-+            "resultado": resultado,
++-+        }
++-+    except Exception as error:
++-+        return {
++-+            "ok": False,
++-+            "query": query.strip(),
++-+            "resultado": None,
++-+            "error": str(error),
++-+        }
++-+
++-+
++- def _mac_desde_topic(topic: str | None) -> str:
++-     if not topic:
++-         return ""
++-@@ -178,15 +231,107 @@ def _obtener_wo_tk(num_op: str, recurso: str, actividad: str) -> tuple[Any, Any,
++-     return 0, 0, query_recurso
++- 
++- 
++--def _obtener_suma_mt_anterior(num_op: str, actividad: str) -> Any:
++--    query = f"""
++-+def _construir_query_suma_mt_anterior(num_op: str, actividad: str) -> str:
++-+    return f"""
++-         SELECT SUM(cantidadreal)
++-         FROM smartfactory.resumenmarcajes
++-         WHERE actividad = '{limpiar_sql(actividad)}'
++-           AND numOp = '{limpiar_sql(num_op)}'
++-           AND estado = 'MT'
++-     """
++--    return _consulta_un_valor(query, 0)
++-+
++-+
++-+def _obtener_suma_mt_anterior(num_op: str, actividad: str) -> Any:
++-+    return _consulta_un_valor(_construir_query_suma_mt_anterior(num_op, actividad), 0)
++-+
++-+
++-+def _obtener_diagnostico_cantidadreal_negativa(
++-+    *,
++-+    marcaje: dict[str, Any],
++-+    tipo_cierre: str,
++-+    total_usuario: Any,
++-+    num_op: str,
++-+    recurso: str,
++-+    actividad: str,
++-+    cantidad: Any,
++-+    username: str,
++-+    topic: str,
++-+    mac: str,
++-+    datos_cierre: dict[str, Any],
++-+    cantreal_original: Any,
++-+    suma_mt_anterior: Any,
++-+    cantreal_calculada: Any,
++-+    wo_number: Any,
++-+    tk_id: Any,
++-+    query_wo_tk: str,
++-+) -> dict[str, Any]:
++-+    mac_where = f" AND mac = '{limpiar_sql(mac)}'" if mac else ""
++-+
++-+    query_datossensados_detalle = f"""
++-+        SELECT *
++-+        FROM smartfactory.datossensados
++-+        WHERE numOp = '{limpiar_sql(num_op)}'
++-+          AND actividad = '{limpiar_sql(actividad)}'
++-+          {mac_where}
++-+        ORDER BY fechatiempo ASC
++-+    """
++-+
++-+    query_mt_detalle = f"""
++-+        SELECT *
++-+        FROM smartfactory.resumenmarcajes
++-+        WHERE actividad = '{limpiar_sql(actividad)}'
++-+          AND numOp = '{limpiar_sql(num_op)}'
++-+          AND estado = 'MT'
++-+        ORDER BY tiempoinicio ASC
++-+    """
++-+
++-+    return {
++-+        "evento": "ALERTA_CANTIDADREAL_NEGATIVA",
++-+        "fecha_diagnostico": _ahora_sql(),
++-+        "tipo_cierre": tipo_cierre,
++-+        "tipo_cierre_nombre": TIPOS_CIERRE.get(tipo_cierre),
++-+        "marcaje_recibido": marcaje,
++-+        "contexto_operativo": {
++-+            "numOp": num_op,
++-+            "recurso": recurso,
++-+            "actividad": actividad,
++-+            "cantidadcot": cantidad,
++-+            "username": username,
++-+            "topic": topic,
++-+            "mac": mac,
++-+            "totalUsuario": total_usuario,
++-+            "wo_number": wo_number,
++-+            "tk_id": tk_id,
++-+        },
++-+        "calculo_cantidadreal": {
++-+            "cantreal_original": cantreal_original,
++-+            "suma_mt_anterior": suma_mt_anterior,
++-+            "formula": f"{cantreal_original} - {suma_mt_anterior}",
++-+            "cantreal_calculada": cantreal_calculada,
++-+            "regla": "cantidadreal = ultimo cantpliegos de datossensados - SUM(cantidadreal de MT anteriores)",
++-+        },
++-+        "datos_cierre_datossensados": {
++-+            "cantreal": datos_cierre.get("cantreal"),
++-+            "tiempo_inicio": datos_cierre.get("tiempo_inicio"),
++-+            "tiempo_final": datos_cierre.get("tiempo_final"),
++-+            "duracion": datos_cierre.get("duracion"),
++-+            "query_calculo": str(datos_cierre.get("query") or "").strip(),
++-+            "estructura_tabla": _consultar_diagnostico("SHOW COLUMNS FROM smartfactory.datossensados"),
++-+            "detalle_completo": _consultar_diagnostico(query_datossensados_detalle),
++-+        },
++-+        "mt_anteriores": {
++-+            "suma_utilizada": suma_mt_anterior,
++-+            "query_suma": _construir_query_suma_mt_anterior(num_op, actividad).strip(),
++-+            "estructura_tabla": _consultar_diagnostico("SHOW COLUMNS FROM smartfactory.resumenmarcajes"),
++-+            "detalle_completo": _consultar_diagnostico(query_mt_detalle),
++-+            "nota": "La lógica vigente filtra MT por numOp + actividad + estado='MT'; no filtra recurso ni MAC.",
++-+        },
++-+        "optimus_wo_tk": {
++-+            "wo_number": wo_number,
++-+            "tk_id": tk_id,
++-+            "query": str(query_wo_tk or "").strip(),
++-+        },
++-+    }
++- 
++- 
++- def _construir_mqtt_fin(num_op: str, recurso: str, actividad: str, cantidad: Any, tmp_begin: str, tmp_fin: str) -> str:
++-@@ -267,6 +412,46 @@ def simular_cierre_marcaje(marcaje: dict[str, Any], tipo_cierre: str, total_usua
++-     duracion = datos_cierre["duracion"]
++-     wo_number, tk_id, query_wo_tk = _obtener_wo_tk(num_op, recurso, actividad)
++- 
++-+    # Diagnóstico v20.20: solo se ejecutan consultas adicionales cuando la cantidadreal es negativa.
++-+    # El log es informativo y nunca altera, bloquea ni corrige el cierre.
++-+    try:
++-+        if float(cantreal_calculada) < 0:
++-+            logger.error(
++-+                "ANOMALIA: cantidadreal negativa (%s) para OP %s, MAC %s. "
++-+                "cantreal_original: %s, suma_mt_anterior: %s, tipo_cierre: %s, recurso: %s, actividad: %s",
++-+                cantreal_calculada,
++-+                num_op,
++-+                mac,
++-+                cantreal_original,
++-+                suma_mt_anterior,
++-+                tipo_cierre,
++-+                recurso,
++-+                actividad,
++-+            )
++-+            diagnostico_negativo = _obtener_diagnostico_cantidadreal_negativa(
++-+                marcaje=marcaje,
++-+                tipo_cierre=tipo_cierre,
++-+                total_usuario=total_usuario_limpio,
++-+                num_op=num_op,
++-+                recurso=recurso,
++-+                actividad=actividad,
++-+                cantidad=cantidad,
++-+                username=username,
++-+                topic=topic,
++-+                mac=mac,
++-+                datos_cierre=datos_cierre,
++-+                cantreal_original=cantreal_original,
++-+                suma_mt_anterior=suma_mt_anterior,
++-+                cantreal_calculada=cantreal_calculada,
++-+                wo_number=wo_number,
++-+                tk_id=tk_id,
++-+                query_wo_tk=query_wo_tk,
++-+            )
++-+            _log_cantidadreal_negativa(diagnostico_negativo)
++-+    except Exception as error:
++-+        # La trazabilidad no debe introducir una nueva causa de fallo en producción.
++-+        logger.error(f"Fallo al generar diagnóstico de cantidadreal negativa: {error}")
++-+
++-     mensaje_mqtt_fin = _construir_mqtt_fin(num_op, recurso, actividad, cantidad, tmp_begin, tmp_fin)
++-     publica_mqtt = tipo_cierre in {"FINAL", "MD"}
++- 
++-diff --git a/templates/index.html b/templates/index.html
++-index adbc58e..6906783 100644
++---- a/templates/index.html
++-+++ b/templates/index.html
++-@@ -14,7 +14,7 @@
++-                     <img src="/static/img/logo_mayaprin.png" alt="Mayaprin" class="brand-logo">
++-                 </div>
++-                 <div>
++--                    <p class="eyebrow">SmartFactory Web · v20.9</p>
++-+                    <p class="eyebrow">SmartFactory Web · v20.20</p>
++-                     <h1>Control operacional de planta</h1>
++-                     <p class="subtitle">Sistema MES en tiempo real para marcajes, producción y trazabilidad.</p>
++-                 </div>
++diff --git a/main.py b/main.py
++index 3dc4b83..1698e04 100644
++--- a/main.py
+++++ b/main.py
++@@ -22,7 +22,7 @@ from realtime.mqtt_websocket_manager import mqtt_ws_manager
++ from services.marcajes_estado_service import listar_marcajes_activos_simulados
++ from services.mqtt_service import mqtt_monitor
++ 
++-app = FastAPI(title="SmartFactory Web", version="20.21.0")
+++app = FastAPI(title="SmartFactory Web", version="20.22.0")
++ 
++ app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
++ templates = Jinja2Templates(directory=BASE_DIR / "templates")
++@@ -76,7 +76,7 @@ def inicio(request: Request):
++ 
++ @app.get("/api/health")
++ def health_check():
++-    return {"ok": True, "version": "20.21.0", "mensaje": "SmartFactory Web funcionando"}
+++    return {"ok": True, "version": "20.22.0", "mensaje": "SmartFactory Web funcionando"}
++ 
++ 
++ 
++diff --git a/models/schemas.py b/models/schemas.py
++index a4cb49f..b49bc16 100644
++--- a/models/schemas.py
+++++ b/models/schemas.py
++@@ -52,3 +52,4 @@ class SimularCierreMarcajeRequest(BaseModel):
++     marcaje: dict = Field(..., description="Objeto marcaje activo que se desea cerrar")
++     tipo_cierre: str = Field(..., min_length=1, description="FINAL, MD o MT")
++     total_usuario: str | int | float | None = Field(0, description="Cantidad manual reportada por el usuario")
+++    pausa_improductiva: bool = Field(False, description="True solo cuando el cierre MD proviene del botón PAUSA POR ACTIVIDAD IMPRODUCTIVA")
++diff --git a/readme/README_V20_22.md b/readme/README_V20_22.md
++new file mode 100644
++index 0000000..20d5cf8
++--- /dev/null
+++++ b/readme/README_V20_22.md
++@@ -0,0 +1,28 @@
+++# SmartFactory Web V2 - v20.22
+++
+++## Nueva función: Pausa por actividad improductiva
+++
+++Se agrega un botón visualmente diferenciado **PAUSA POR ACTIVIDAD IMPRODUCTIVA** en la interfaz de cierre posterior a la validación de huella.
+++
+++### Flujo
+++
+++1. El usuario debe ingresar obligatoriamente el total/cantidad realizada. El valor 0 es válido si fue ingresado explícitamente.
+++2. El botón ejecuta el mismo cierre real **MD** existente (reporte parcial con detenimiento de máquina).
+++3. Únicamente para cierres originados desde este botón, el INSERT del usuario en `smartfactory.resumenmarcajes` incluye `variable01 = 1`.
+++4. Un MD normal mantiene el INSERT histórico y omite `variable01`, conservando su DEFAULT `NULL`.
+++5. Solo después de un cierre MD exitoso se conserva temporalmente el usuario y recurso y se pregunta qué tiempo improductivo desea iniciar: COMIDA, MANTO, FALLA o CAMBIO.
+++6. Al seleccionar una opción se reutiliza `/api/marcajes/iniciar-improductivo`, incluyendo sus validaciones existentes y publicación MQTT. No se solicita nuevamente huella ni recurso.
+++7. Si el usuario cancela la selección, el cierre permanece válido, no se crea otro marcaje y la interfaz vuelve a la página principal.
+++8. Si el inicio improductivo falla, el cierre MD no se revierte y se informa al usuario.
+++
+++### Cambios técnicos
+++
+++- `templates/index.html`: nuevo botón y versión visual v20.22.
+++- `static/css/estilos.css`: estilo diferenciado del botón.
+++- `static/js/app.js`: flujo especial post-cierre e inicio automático del improductivo.
+++- `models/schemas.py`: campo opcional `pausa_improductiva` en el request de cierre.
+++- `api/marcajes_api.py`: propaga el indicador al servicio de cierres.
+++- `services/cierres_service.py`: valida que el indicador solo se use con MD y agrega `variable01 = 1` únicamente en ese INSERT.
+++- `main.py`: versión 20.22.0.
+++
+++No se agregaron dependencias ni se modificaron las reglas existentes de FINAL, MD normal, MT, diagnóstico de cantidadreal, MQTT, huella o apertura de tiraje posterior a ARR.
++diff --git a/services/cierres_service.py b/services/cierres_service.py
++index 24387ad..a381d36 100644
++--- a/services/cierres_service.py
+++++ b/services/cierres_service.py
++@@ -354,7 +354,7 @@ def _separar_fecha_hora_para_mqtt(fechatiempo: str) -> tuple[str, str]:
++         return ahora.strftime("%Y/%m/%d"), ahora.strftime("%H:%M:%S")
++ 
++ 
++-def simular_cierre_marcaje(marcaje: dict[str, Any], tipo_cierre: str, total_usuario: Any) -> dict[str, Any]:
+++def simular_cierre_marcaje(marcaje: dict[str, Any], tipo_cierre: str, total_usuario: Any, pausa_improductiva: bool = False) -> dict[str, Any]:
++     """
++     Simula el cierre de marcaje con las 3 rutas operativas:
++     FINAL: finalización completa de actividad.
++@@ -364,12 +364,19 @@ def simular_cierre_marcaje(marcaje: dict[str, Any], tipo_cierre: str, total_usua
++     No ejecuta INSERT, DELETE ni publicación MQTT.
++     """
++     tipo_cierre = str(tipo_cierre or "").strip().upper()
+++    pausa_improductiva = bool(pausa_improductiva)
++     if tipo_cierre not in TIPOS_CIERRE:
++         return {
++             "ok": False,
++             "mensaje": "Tipo de cierre inválido. Use FINAL, MD o MT.",
++         }
++ 
+++    if pausa_improductiva and tipo_cierre != "MD":
+++        return {
+++            "ok": False,
+++            "mensaje": "La pausa por actividad improductiva solo puede ejecutarse como cierre MD.",
+++        }
+++
++     num_op = limpiar_sql(marcaje.get("numOp") or marcaje.get("num_op"))
++     recurso = limpiar_sql(marcaje.get("recurso"))
++     actividad = limpiar_sql(marcaje.get("actividad"))
++@@ -457,7 +464,16 @@ def simular_cierre_marcaje(marcaje: dict[str, Any], tipo_cierre: str, total_usua
++ 
++     insert_usuario_estado = "NULL" if tipo_cierre == "FINAL" else f"'{tipo_cierre}'"
++ 
++-    insert_resumen_usuario = f"""INSERT INTO smartfactory.resumenmarcajes
+++    if pausa_improductiva:
+++        insert_resumen_usuario = f"""INSERT INTO smartfactory.resumenmarcajes
+++    (numOp, recurso, actividad, cantidadcot, cantidadreal, username, tiempoinicio, tiempofinal, estado, totalUsuario, wo_number, tk_id, duracion, variable01)
+++VALUES
+++    ('{num_op}', '{recurso}', '{actividad}', '{cantidad}', '{cantreal_calculada}', '{username}',
+++     '{tmp_begin}', '{tmp_fin}', {insert_usuario_estado}, '{total_usuario_limpio}', '{limpiar_sql(wo_number)}', '{limpiar_sql(tk_id)}', '{duracion}', 1);"""
+++    else:
+++        # Mantener exactamente el INSERT histórico para FINAL/MD/MT normales.
+++        # variable01 conserva su DEFAULT NULL al no incluirse en la sentencia.
+++        insert_resumen_usuario = f"""INSERT INTO smartfactory.resumenmarcajes
++     (numOp, recurso, actividad, cantidadcot, cantidadreal, username, tiempoinicio, tiempofinal, estado, totalUsuario, wo_number, tk_id, duracion)
++ VALUES
++     ('{num_op}', '{recurso}', '{actividad}', '{cantidad}', '{cantreal_calculada}', '{username}',
++@@ -544,6 +560,8 @@ VALUES
++                 "tk_id": tk_id,
++                 "topic": topic,
++                 "mac": mac,
+++                "pausa_improductiva": pausa_improductiva,
+++                "variable01": 1 if pausa_improductiva else None,
++             },
++             "nota": "v15 solamente simula el cierre. No ejecuta INSERT, DELETE ni publish MQTT.",
++         },
++@@ -551,7 +569,7 @@ VALUES
++ 
++ 
++ 
++-def ejecutar_cierre_marcaje_real(marcaje: dict[str, Any], tipo_cierre: str, total_usuario: Any) -> dict[str, Any]:
+++def ejecutar_cierre_marcaje_real(marcaje: dict[str, Any], tipo_cierre: str, total_usuario: Any, pausa_improductiva: bool = False) -> dict[str, Any]:
++     """
++     Ejecuta el cierre real del marcaje según las 3 rutas operativas:
++     FINAL: cierre definitivo de actividad, inserta resumen usuario + resumen SMARTFACTORY estado F.
++@@ -562,7 +580,7 @@ def ejecutar_cierre_marcaje_real(marcaje: dict[str, Any], tipo_cierre: str, tota
++     - Requiere SMARTFACTORY_ENABLE_REAL_DB_WRITES=1 para modificar BD.
++     - FINAL/MD requieren SMARTFACTORY_ENABLE_REAL_MQTT_PUBLISH=1 para publicar paro al ESP.
++     """
++-    simulacion = simular_cierre_marcaje(marcaje, tipo_cierre, total_usuario)
+++    simulacion = simular_cierre_marcaje(marcaje, tipo_cierre, total_usuario, pausa_improductiva=pausa_improductiva)
++ 
++     if not simulacion.get("ok"):
++         return simulacion
++diff --git a/static/css/estilos.css b/static/css/estilos.css
++index fabdd7f..33599f3 100644
++--- a/static/css/estilos.css
+++++ b/static/css/estilos.css
++@@ -268,6 +268,32 @@ button:hover {
++     background: #1e293b;
++ }
++ 
+++.pause-improductive-action {
+++    background: #d97706;
+++    border: 2px solid #92400e;
+++    box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.14);
+++}
+++
+++.pause-improductive-action:hover {
+++    background: #b45309;
+++}
+++
+++.improductive-pause-options {
+++    display: grid;
+++    gap: 10px;
+++    margin-top: 12px;
+++}
+++
+++.improductive-pause-choice {
+++    width: 100%;
+++    margin-top: 0;
+++    background: #334155;
+++}
+++
+++.improductive-pause-choice:hover {
+++    background: #1e293b;
+++}
+++
++ .live-card {
++     margin-top: 18px;
++     background: white;
++diff --git a/static/js/app.js b/static/js/app.js
++index 9034129..5b57fa1 100644
++--- a/static/js/app.js
+++++ b/static/js/app.js
++@@ -384,14 +384,133 @@ async function prepararTirajeMismaOrdenDespuesArreglo(contexto) {
++     }
++ }
++ 
++-async function ejecutarCierreRealMarcajeActivoDelUsuario() {
+++async function ejecutarPausaPorActividadImproductiva() {
+++    const inputTotal = document.getElementById("totalUsuarioCierre");
+++    const totalIngresado = String(inputTotal?.value ?? "").trim();
+++
+++    if (totalIngresado === "") {
+++        await Swal.fire({
+++            icon: "warning",
+++            title: "Cantidad realizada obligatoria",
+++            text: "Ingrese la cantidad realizada antes de iniciar la pausa por actividad improductiva.",
+++            confirmButtonText: "Entendido"
+++        });
+++        inputTotal?.focus();
+++        return;
+++    }
+++
+++    return ejecutarCierreRealMarcajeActivoDelUsuario({
+++        tipoCierreForzado: "MD",
+++        pausaImproductiva: true
+++    });
+++}
+++
+++async function seleccionarEIniciarTiempoImproductivoDespuesPausa(contexto) {
+++    const nombresActividad = {
+++        COMIDA: "Tiempo de Comida",
+++        MANTO: "Mantenimiento Preventivo",
+++        FALLA: "Falla/Emergencia",
+++        CAMBIO: "Cambio de Motivo"
+++    };
+++
+++    // Cada opción funciona como acción directa: al presionarla se cierra el cuadro
+++    // y se intenta abrir inmediatamente el nuevo marcaje improductivo.
+++    const actividad = await new Promise((resolve) => {
+++        let resuelto = false;
+++        const finalizar = (valor) => {
+++            if (resuelto) return;
+++            resuelto = true;
+++            resolve(valor);
+++        };
+++
+++        Swal.fire({
+++            icon: "question",
+++            title: "¿Qué tipo de tiempo improductivo quiere marcar?",
+++            html: `
+++                <div class="improductive-pause-options">
+++                    <button type="button" class="improductive-pause-choice" data-actividad="COMIDA">Tiempo de Comida</button>
+++                    <button type="button" class="improductive-pause-choice" data-actividad="MANTO">Mantenimiento Preventivo</button>
+++                    <button type="button" class="improductive-pause-choice" data-actividad="FALLA">Falla/Emergencia</button>
+++                    <button type="button" class="improductive-pause-choice" data-actividad="CAMBIO">Cambio de Motivo</button>
+++                </div>
+++            `,
+++            showConfirmButton: false,
+++            showCancelButton: true,
+++            cancelButtonText: "Cancelar",
+++            didOpen: () => {
+++                document.querySelectorAll(".improductive-pause-choice").forEach((boton) => {
+++                    boton.addEventListener("click", () => {
+++                        const codigo = boton.dataset.actividad;
+++                        finalizar(codigo);
+++                        Swal.close();
+++                    });
+++                });
+++            }
+++        }).then((resultado) => {
+++            if (resultado.isDismissed) {
+++                finalizar(null);
+++            }
+++        });
+++    });
+++
+++    if (!actividad) {
+++        log("Cierre MD por pausa improductiva completado. El usuario canceló la apertura del tiempo improductivo.");
+++        cancelarFlujoOperativo();
+++        return;
+++    }
+++
+++    const actividadNombre = nombresActividad[actividad] || actividad;
+++
+++    try {
+++        log(`Iniciando automáticamente tiempo improductivo ${actividad} en recurso ${contexto.recurso}...`);
+++
+++        const datos = await postJson("/api/marcajes/iniciar-improductivo", {
+++            num_op: "12345",
+++            descripcion: "Tiempo Improductivo",
+++            cantidad: "12345",
+++            recurso: contexto.recurso,
+++            actividad: actividad,
+++            actividad_nombre: actividadNombre,
+++            codigo_usuario: contexto.usuario.code
+++        });
+++
+++        renderMarcajesActivos(datos.marcajes || []);
+++        log(datos.mensaje || "Marcaje improductivo iniciado correctamente.");
+++
+++        await Swal.fire({
+++            icon: "success",
+++            title: "Tiempo improductivo iniciado",
+++            html: `
+++                <strong>Actividad:</strong> ${actividadNombre}<br>
+++                <strong>Recurso:</strong> ${contexto.recurso}<br><br>
+++                El marcaje improductivo fue abierto con el mismo usuario y recurso.
+++            `,
+++            confirmButtonText: "Entendido"
+++        });
+++
+++        cancelarFlujoOperativo();
+++    } catch (error) {
+++        log(`El cierre MD fue completado, pero no se pudo iniciar el tiempo improductivo: ${error.message}`, true);
+++        await Swal.fire({
+++            icon: "error",
+++            title: "No se pudo iniciar el tiempo improductivo",
+++            text: `${error.message}. El cierre anterior ya fue completado y no será revertido.`,
+++            confirmButtonText: "Entendido"
+++        });
+++        cancelarFlujoOperativo();
+++    }
+++}
+++
+++async function ejecutarCierreRealMarcajeActivoDelUsuario(opciones = {}) {
++     if (!marcajeActivoUsuario) {
++         log("No hay marcaje activo cargado para ejecutar cierre real.", true);
++         return;
++     }
++ 
++-    const tipoCierre = document.getElementById("tipoCierreMarcaje").value;
++-    const totalUsuario = document.getElementById("totalUsuarioCierre").value || 0;
+++    const pausaImproductiva = Boolean(opciones.pausaImproductiva);
+++    const tipoCierre = opciones.tipoCierreForzado || document.getElementById("tipoCierreMarcaje").value;
+++    const valorTotalUsuario = String(document.getElementById("totalUsuarioCierre").value ?? "").trim();
+++    const totalUsuario = valorTotalUsuario === "" ? 0 : valorTotalUsuario;
++ 
++     const confirmacionCierre = await Swal.fire({
++         icon: "warning",
++@@ -423,13 +542,19 @@ async function ejecutarCierreRealMarcajeActivoDelUsuario() {
++         actividad: marcajeActivoUsuario.actividad
++     };
++ 
+++    const contextoPausaImproductiva = pausaImproductiva ? {
+++        usuario: usuarioActual ? { ...usuarioActual } : null,
+++        recurso: marcajeActivoUsuario.recurso
+++    } : null;
+++
++     try {
++         log(`Ejecutando cierre real ${tipoCierre} para OP ${marcajeActivoUsuario.numOp}...`);
++ 
++         const datos = await postJson("/api/marcajes/ejecutar-cierre-real", {
++             marcaje: marcajeActivoUsuario,
++             tipo_cierre: tipoCierre,
++-            total_usuario: totalUsuario
+++            total_usuario: totalUsuario,
+++            pausa_improductiva: pausaImproductiva
++         });
++ 
++         log(datos.mensaje || "Cierre real ejecutado correctamente.");
++@@ -472,6 +597,18 @@ async function ejecutarCierreRealMarcajeActivoDelUsuario() {
++             ocultarPanelRelevoMt();
++         }
++ 
+++        // La pausa improductiva es un MD ya completado. Solo después de que el cierre
+++        // terminó correctamente se ofrece seleccionar e iniciar el improductivo.
+++        if (pausaImproductiva && contextoPausaImproductiva?.usuario && contextoPausaImproductiva?.recurso) {
+++            try {
+++                await seleccionarEIniciarTiempoImproductivoDespuesPausa(contextoPausaImproductiva);
+++            } catch (errorPostCierre) {
+++                log(`Cierre MD por pausa improductiva completado, pero falló el flujo posterior: ${errorPostCierre.message}`, true);
+++                cancelarFlujoOperativo();
+++            }
+++            return;
+++        }
+++
++         // Solo después de completar exitosamente TODO el cierre FINAL se ofrece
++         // aperturar tiraje si el código de actividad contiene ARR (case-insensitive).
++         if (tipoCierre === "FINAL" && actividadEsArreglo(contextoArregloCerrado.actividad)) {
++@@ -1514,6 +1651,7 @@ conectarWebSocketMqtt();
++ // expuestas explícitamente y además conectamos el botón por addEventListener.
++ window.simularCierreMarcajeActivoDelUsuario = simularCierreMarcajeActivoDelUsuario;
++ window.ejecutarCierreRealMarcajeActivoDelUsuario = ejecutarCierreRealMarcajeActivoDelUsuario;
+++window.ejecutarPausaPorActividadImproductiva = ejecutarPausaPorActividadImproductiva;
++ window.cambiarUsuarioDesdeMarcajeActivo = cambiarUsuarioDesdeMarcajeActivo;
++ window.copiarTexto = copiarTexto;
++ 
++diff --git a/templates/index.html b/templates/index.html
++index e75dbf1..ebf9bb2 100644
++--- a/templates/index.html
+++++ b/templates/index.html
++@@ -14,7 +14,7 @@
++                     <img src="/static/img/logo_mayaprin.png" alt="Mayaprin" class="brand-logo">
++                 </div>
++                 <div>
++-                    <p class="eyebrow">SmartFactory Web · v20.21</p>
+++                    <p class="eyebrow">SmartFactory Web · v20.22</p>
++                     <h1>Control operacional de planta</h1>
++                     <p class="subtitle">Sistema MES en tiempo real para marcajes, producción y trazabilidad.</p>
++                 </div>
++@@ -129,9 +129,10 @@
++ 
++                     <div class="button-row">
++                         <button class="danger-action" onclick="ejecutarCierreRealMarcajeActivoDelUsuario()">Ejecutar cierre</button>
+++                        <button class="pause-improductive-action" onclick="ejecutarPausaPorActividadImproductiva()">PAUSA POR ACTIVIDAD IMPRODUCTIVA</button>
++                         <button class="secondary-action admin-only permission-hidden" onclick="cambiarUsuarioDesdeMarcajeActivo()">Identificar otro usuario</button>
++                     </div>
++-                    <p class="small-note">FINAL/MD publican MQTT stop antes de cerrar en BD. MT conserva continuidad operacional para relevo.</p>
+++                    <p class="small-note">FINAL/MD publican MQTT stop antes de cerrar en BD. MT conserva continuidad operacional para relevo. La pausa improductiva ejecuta un MD y luego permite abrir un tiempo improductivo con el mismo usuario y recurso.</p>
++                 </div>
++ 
++ 
+diff --git a/cambios_stat_09092026_1728.diff b/cambios_stat_09092026_1728.diff
+new file mode 100644
+index 0000000..6cae876
+--- /dev/null
++++ b/cambios_stat_09092026_1728.diff
+@@ -0,0 +1,10 @@
++ api/marcajes_api.py                           |   2 +
++ cambios_version_inicial_a_logs_negativos.diff | 368 --------------------------
++ main.py                                       |   4 +-
++ models/schemas.py                             |   1 +
++ readme/README_V20_22.md                       |  28 ++
++ services/cierres_service.py                   |  26 +-
++ static/css/estilos.css                        |  26 ++
++ static/js/app.js                              | 146 +++++++++-
++ templates/index.html                          |   5 +-
++ 9 files changed, 226 insertions(+), 380 deletions(-)
+diff --git a/main.py b/main.py
+index 1698e04..8c9e88f 100644
+--- a/main.py
++++ b/main.py
+@@ -22,7 +22,7 @@ from realtime.mqtt_websocket_manager import mqtt_ws_manager
+ from services.marcajes_estado_service import listar_marcajes_activos_simulados
+ from services.mqtt_service import mqtt_monitor
+ 
+-app = FastAPI(title="SmartFactory Web", version="20.22.0")
++app = FastAPI(title="SmartFactory Web", version="20.23.0")
+ 
+ app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+ templates = Jinja2Templates(directory=BASE_DIR / "templates")
+@@ -76,7 +76,7 @@ def inicio(request: Request):
+ 
+ @app.get("/api/health")
+ def health_check():
+-    return {"ok": True, "version": "20.22.0", "mensaje": "SmartFactory Web funcionando"}
++    return {"ok": True, "version": "20.23.0", "mensaje": "SmartFactory Web funcionando"}
+ 
+ 
+ 
+diff --git a/models/schemas.py b/models/schemas.py
+index b49bc16..0bc1b64 100644
+--- a/models/schemas.py
++++ b/models/schemas.py
+@@ -19,6 +19,11 @@ class ActividadesRequest(BaseModel):
+     recurso: str = Field(..., min_length=1, description="Centro de costo/recurso seleccionado")
+ 
+ 
++class UltimoResumenRecursoUsuarioRequest(BaseModel):
++    recurso: str = Field(..., min_length=1, description="Recurso del marcaje improductivo que se está cerrando")
++    username: str = Field(..., min_length=1, description="Usuario del marcaje improductivo que se está cerrando")
++
++
+ class PrepararMarcajeRequest(BaseModel):
+     num_op: str = Field(..., min_length=1, description="Número de OP real/job")
+     num_ot: str = Field(..., min_length=1, description="Número OT, normalmente OP + 01")
+diff --git a/readme/README_V20_23.md b/readme/README_V20_23.md
+new file mode 100644
+index 0000000..22e2915
+--- /dev/null
++++ b/readme/README_V20_23.md
+@@ -0,0 +1,30 @@
++# SmartFactory Web v20.23
++
++## Retorno automático después de tiempo improductivo
++
++Esta versión parte de v20.22 y agrega un flujo posterior al cierre exitoso de un marcaje improductivo (`numOp = 12345`).
++
++### Regla de identificación
++
++Un marcaje se considera improductivo únicamente cuando su OP es `12345`.
++
++### Consulta del contexto anterior
++
++Antes de ejecutar el cierre del improductivo se consulta exactamente el último registro de `smartfactory.resumenmarcajes` para el mismo recurso y usuario, ordenado por `tiempofinal DESC` y limitado a un registro. La consulta se hace antes del cierre para evitar que el improductivo recién cerrado pase a ser el registro más reciente. Ninguna acción posterior se ejecuta hasta que el cierre improductivo termina correctamente.
++
++Si el último registro encontrado no tiene `variable01 = 1`, el cierre termina normalmente sin sugerir reapertura. No se continúa buscando registros históricos anteriores.
++
++### Reanudación
++
++Cuando el último registro previo tiene `variable01 = 1`, después del cierre exitoso se muestra una confirmación para continuar la actividad anterior, indicando actividad, recurso y orden.
++
++- **No:** el cierre termina normalmente y no se crea otro marcaje.
++- **Sí:** se reconstruye la OP mediante los endpoints existentes, se valida que el recurso siga disponible y se valida la actividad (cotizada o no cotizada). Luego se reutiliza `/api/marcajes/iniciar-real-bd` para abrir automáticamente el marcaje.
++
++No se heredan MAC, topic, contadores MQTT, tiempos ni datos operativos del marcaje anterior. Las validaciones y la publicación MQTT siguen siendo las existentes en el flujo normal de apertura.
++
++Si la reapertura falla, el tiempo improductivo ya cerrado no se revierte.
++
++### Compatibilidad
++
++No se modifica la lógica de FINAL, MD, MT, `cantidadreal`, diagnóstico de valores negativos, flujo ARR de v20.21 ni PAUSA POR ACTIVIDAD IMPRODUCTIVA de v20.22.
+diff --git a/services/cierres_service.py b/services/cierres_service.py
+index a381d36..b05ef04 100644
+--- a/services/cierres_service.py
++++ b/services/cierres_service.py
+@@ -26,6 +26,53 @@ TIPOS_CIERRE = {
+ }
+ 
+ 
++def obtener_ultimo_resumen_recurso_usuario(recurso: str, username: str) -> dict[str, Any]:
++    """
++    Obtiene exactamente el último registro de resumenmarcajes para recurso + usuario.
++
++    Este método se consulta ANTES de cerrar un marcaje improductivo (OP 12345),
++    de modo que el registro recién cerrado no desplace al MD productivo que originó
++    la pausa. La decisión de reabrir se toma únicamente DESPUÉS de que el cierre
++    improductivo termine correctamente.
++    """
++    recurso_limpio = limpiar_sql(recurso)
++    username_limpio = limpiar_sql(username)
++
++    query = f"""
++        SELECT *
++        FROM smartfactory.resumenmarcajes
++        WHERE recurso = '{recurso_limpio}'
++          AND username = '{username_limpio}'
++        ORDER BY tiempofinal DESC
++        LIMIT 1
++    """
++
++    filas = dtbSmartFactory(query).consultaSmartFactory()
++    if not filas:
++        return {
++            "ok": True,
++            "encontrado": False,
++            "registro": None,
++        }
++
++    columnas_raw = dtbSmartFactory("SHOW COLUMNS FROM smartfactory.resumenmarcajes").consultaSmartFactory() or []
++    columnas = [str(fila[0]) for fila in columnas_raw if fila]
++    if not columnas:
++        return {
++            "ok": False,
++            "encontrado": False,
++            "registro": None,
++            "mensaje": "No fue posible identificar las columnas de resumenmarcajes.",
++        }
++
++    registro = dict(zip(columnas, filas[0]))
++    return {
++        "ok": True,
++        "encontrado": True,
++        "registro": registro,
++    }
++
++
+ def _ahora_sql() -> str:
+     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+ 
+diff --git a/static/js/app.js b/static/js/app.js
+index 5b57fa1..5943188 100644
+--- a/static/js/app.js
++++ b/static/js/app.js
+@@ -501,6 +501,163 @@ async function seleccionarEIniciarTiempoImproductivoDespuesPausa(contexto) {
+     }
+ }
+ 
++async function consultarContextoRetornoDespuesImproductivo(marcaje) {
++    if (String(marcaje?.numOp || "") !== "12345") {
++        return null;
++    }
++
++    const recurso = String(marcaje?.recurso || "").trim();
++    const username = String(marcaje?.username || usuarioActual?.code || "").trim();
++
++    if (!recurso || !username) {
++        log("No se pudo consultar el contexto previo del tiempo improductivo por falta de usuario o recurso.", true);
++        return null;
++    }
++
++    try {
++        const datos = await postJson("/api/marcajes/ultimo-resumen-recurso-usuario", {
++            recurso,
++            username
++        });
++
++        const registro = datos?.registro || null;
++        if (!datos?.encontrado || !registro) {
++            return null;
++        }
++
++        // Se evalúa exclusivamente el último registro devuelto por el query acordado.
++        // No se busca hacia atrás si variable01 no es 1.
++        if (Number(registro.variable01) !== 1) {
++            return null;
++        }
++
++        return {
++            usuario: username,
++            recurso: String(registro.recurso || recurso).trim(),
++            actividad: String(registro.actividad || "").trim(),
++            numOp: String(registro.numOp || "").trim()
++        };
++    } catch (error) {
++        // La consulta es auxiliar. Nunca debe impedir el cierre del improductivo.
++        log(`No se pudo consultar el marcaje productivo previo al improductivo: ${error.message}`, true);
++        return null;
++    }
++}
++
++async function reabrirActividadDespuesImproductivo(contexto) {
++    if (!contexto?.usuario || !contexto?.recurso || !contexto?.actividad || !contexto?.numOp) {
++        throw new Error("El registro anterior no contiene todos los datos necesarios para reabrir la actividad");
++    }
++
++    const confirmacion = await Swal.fire({
++        icon: "question",
++        title: "¿Desea continuar con la tarea?",
++        html: `
++            ¿Desea continuar con la tarea <strong>${contexto.actividad}</strong><br>
++            en el recurso <strong>${contexto.recurso}</strong><br>
++            de la orden <strong>${contexto.numOp}</strong>?
++        `,
++        showCancelButton: true,
++        confirmButtonText: "Sí, continuar",
++        cancelButtonText: "No",
++        reverseButtons: true
++    });
++
++    if (!confirmacion.isConfirmed) {
++        log("Tiempo improductivo cerrado. El usuario decidió no continuar con la actividad productiva anterior.");
++        cancelarFlujoOperativo();
++        return;
++    }
++
++    try {
++        // Reconstruir la orden y volver a validar recurso/actividad. No se heredan
++        // MAC, topic, contadores ni tiempos del marcaje anterior.
++        const datosOrden = await postJson("/api/op/buscar", {
++            num_op: contexto.numOp,
++            codigo_usuario: contexto.usuario
++        });
++
++        const orden = datosOrden?.orden;
++        if (!orden) {
++            throw new Error(`No se pudo reconstruir la orden ${contexto.numOp}`);
++        }
++
++        const recursos = Array.isArray(datosOrden.recursos) ? datosOrden.recursos : [];
++        const recursoValido = recursos.some((item) => {
++            const codigo = typeof item === "string" ? item : item?.codigo;
++            return String(codigo || "").trim() === contexto.recurso;
++        });
++
++        if (!recursoValido) {
++            throw new Error(`El recurso ${contexto.recurso} ya no está disponible para la orden ${contexto.numOp}`);
++        }
++
++        const datosCotizadas = await postJson("/api/actividades/recurso", {
++            num_ot: orden.num_ot,
++            recurso: contexto.recurso
++        });
++
++        let actividades = Array.isArray(datosCotizadas?.actividades) ? datosCotizadas.actividades : [];
++        let actividad = actividades.find((item) => String(item?.codigo || "").trim() === contexto.actividad);
++
++        if (!actividad) {
++            const datosNoCotizadas = await postJson("/api/actividades/no-cotizadas", {
++                num_ot: orden.num_ot,
++                recurso: contexto.recurso
++            });
++            actividades = Array.isArray(datosNoCotizadas?.actividades) ? datosNoCotizadas.actividades : [];
++            actividad = actividades.find((item) => String(item?.codigo || "").trim() === contexto.actividad);
++        }
++
++        if (!actividad) {
++            throw new Error(`La actividad ${contexto.actividad} ya no está disponible en el recurso ${contexto.recurso}`);
++        }
++
++        log(`Reabriendo automáticamente OP ${orden.num_op}, actividad ${actividad.codigo}, recurso ${contexto.recurso}...`);
++
++        const datosInicio = await postJson("/api/marcajes/iniciar-real-bd", {
++            num_op: orden.num_op,
++            num_ot: orden.num_ot,
++            descripcion: orden.descripcion,
++            cantidad: orden.cantidad,
++            recurso: contexto.recurso,
++            actividad: actividad.codigo,
++            actividad_nombre: actividad.nombre,
++            codigo_usuario: contexto.usuario
++        });
++
++        renderMarcajesActivos(datosInicio.marcajes || []);
++        log(datosInicio.mensaje || "Marcaje productivo reabierto correctamente.");
++
++        if (datosInicio.resultado_mqtt_inicio) {
++            const r = datosInicio.resultado_mqtt_inicio;
++            log(`MQTT inicio: ${r.mensaje || "sin mensaje"}${r.topic ? " · " + r.topic : ""}`, !r.ok);
++        }
++
++        await Swal.fire({
++            icon: "success",
++            title: "Actividad reanudada",
++            html: `
++                <strong>OP:</strong> ${orden.num_op}<br>
++                <strong>Actividad:</strong> ${actividad.nombre}<br>
++                <strong>Recurso:</strong> ${contexto.recurso}
++            `,
++            confirmButtonText: "Entendido"
++        });
++
++        cancelarFlujoOperativo();
++    } catch (error) {
++        log(`El tiempo improductivo fue cerrado, pero no se pudo reabrir la actividad anterior: ${error.message}`, true);
++        await Swal.fire({
++            icon: "error",
++            title: "No se pudo reanudar la actividad",
++            text: `${error.message}. El tiempo improductivo ya fue cerrado y no será revertido.`,
++            confirmButtonText: "Entendido"
++        });
++        cancelarFlujoOperativo();
++    }
++}
++
+ async function ejecutarCierreRealMarcajeActivoDelUsuario(opciones = {}) {
+     if (!marcajeActivoUsuario) {
+         log("No hay marcaje activo cargado para ejecutar cierre real.", true);
+@@ -512,6 +669,10 @@ async function ejecutarCierreRealMarcajeActivoDelUsuario(opciones = {}) {
+     const valorTotalUsuario = String(document.getElementById("totalUsuarioCierre").value ?? "").trim();
+     const totalUsuario = valorTotalUsuario === "" ? 0 : valorTotalUsuario;
+ 
++    // Para OP 12345 se conserva el último resumen ANTES del cierre. Si se consultara
++    // después, el improductivo recién cerrado sería el registro más reciente.
++    const contextoRetornoImproductivo = await consultarContextoRetornoDespuesImproductivo(marcajeActivoUsuario);
++
+     const confirmacionCierre = await Swal.fire({
+         icon: "warning",
+         title: "¿Está seguro de cerrar el marcaje?",
+@@ -609,6 +770,19 @@ async function ejecutarCierreRealMarcajeActivoDelUsuario(opciones = {}) {
+             return;
+         }
+ 
++        // Si se cerró un tiempo improductivo (OP 12345) y el último resumen previo
++        // del mismo usuario + recurso tenía variable01 = 1, ofrecer reanudar esa tarea.
++        // El cierre improductivo ya terminó; cualquier fallo aquí nunca lo revierte.
++        if (contextoRetornoImproductivo) {
++            try {
++                await reabrirActividadDespuesImproductivo(contextoRetornoImproductivo);
++            } catch (errorPostCierre) {
++                log(`Tiempo improductivo cerrado, pero falló el flujo de retorno a actividad: ${errorPostCierre.message}`, true);
++                cancelarFlujoOperativo();
++            }
++            return;
++        }
++
+         // Solo después de completar exitosamente TODO el cierre FINAL se ofrece
+         // aperturar tiraje si el código de actividad contiene ARR (case-insensitive).
+         if (tipoCierre === "FINAL" && actividadEsArreglo(contextoArregloCerrado.actividad)) {
+diff --git a/templates/index.html b/templates/index.html
+index ebf9bb2..be8fef6 100644
+--- a/templates/index.html
++++ b/templates/index.html
+@@ -14,7 +14,7 @@
+                     <img src="/static/img/logo_mayaprin.png" alt="Mayaprin" class="brand-logo">
+                 </div>
+                 <div>
+-                    <p class="eyebrow">SmartFactory Web · v20.22</p>
++                    <p class="eyebrow">SmartFactory Web · v20.23</p>
+                     <h1>Control operacional de planta</h1>
+                     <p class="subtitle">Sistema MES en tiempo real para marcajes, producción y trazabilidad.</p>
+                 </div>
