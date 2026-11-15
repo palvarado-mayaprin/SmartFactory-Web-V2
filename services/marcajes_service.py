@@ -29,6 +29,7 @@ def obtener_mac_por_recurso(recurso: str) -> Optional[str]:
         SELECT mac
         FROM smartfactory.macdirectorio
         WHERE recurso = '{recurso_limpio}'
+        OR recursoalternativo = '{recurso_limpio}'
         LIMIT 1
     """
 

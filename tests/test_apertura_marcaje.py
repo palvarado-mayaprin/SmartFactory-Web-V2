@@ -71,6 +71,13 @@ def test_error_de_bd_en_validaciones_no_bloquea(cliente, maquina_libre, escritur
     assert maquina_libre.escrituras()[0].startswith("INSERT INTO smartfactory.marcajeactivo")
 
 
+def test_mac_por_recurso_incluye_recurso_alternativo(cliente, maquina_libre, escritura_habilitada):
+    """P-09: la MAC se busca por recurso o por recursoalternativo (services/marcajes_service.py:32)."""
+    cliente.post(URL, json=PAYLOAD)
+    consulta = [s for s in maquina_libre.sql("smartfactory") if "macdirectorio" in s][0]
+    assert "recursoalternativo" in consulta
+
+
 @pytest.mark.caracterizacion
 def test_improductivo_publica_inicio_con_op_12345(cliente, maquina_libre, escritura_habilitada, mqtt):
     r = cliente.post("/api/marcajes/iniciar-improductivo", json=IMPRODUCTIVO)
