@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from pydantic import BaseModel, Field
 
 
@@ -58,3 +60,8 @@ class SimularCierreMarcajeRequest(BaseModel):
     tipo_cierre: str = Field(..., min_length=1, description="FINAL, MD o MT")
     total_usuario: str | int | float | None = Field(0, description="Cantidad manual reportada por el usuario")
     pausa_improductiva: bool = Field(False, description="True solo cuando el cierre MD proviene del botón PAUSA POR ACTIVIDAD IMPRODUCTIVA")
+    # v20.24: opcional para mantener compatibilidad con clientes anteriores (omitido = NULL, no registrado).
+    pliegos_incorrectos: Annotated[int, Field(strict=True, ge=0, le=2_147_483_647)] | None = Field(
+        None,
+        description="Pliegos incorrectos o rechazados declarados por el operario (entero >= 0). Independiente de total_usuario y cantidadreal.",
+    )

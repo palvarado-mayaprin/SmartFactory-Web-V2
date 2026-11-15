@@ -25,6 +25,35 @@ TIPOS_CIERRE = {
     "MT": "Reporte parcial sin detenimiento de máquina",
 }
 
+# Pliegos incorrectos (v20.24): dato declarado por el operario, independiente de
+# cantidadreal y de totalUsuario. Columna resumenmarcajes.pliegosIncorrectos (INT NULL).
+OP_IMPRODUCTIVO = "12345"
+PLIEGOS_INCORRECTOS_MAX = 2_147_483_647  # Máximo de INT con signo en MySQL.
+
+
+def _validar_pliegos_incorrectos(valor: Any) -> tuple[bool, int | None]:
+    """None = no registrado. Solo se aceptan enteros (no bool) entre 0 y el máximo de INT."""
+    if valor is None:
+        return True, None
+    if isinstance(valor, bool) or not isinstance(valor, int):
+        return False, None
+    if valor < 0 or valor > PLIEGOS_INCORRECTOS_MAX:
+        return False, None
+    return True, valor
+
+
+def _sql_entero_o_null(valor: int | None) -> str:
+    return "NULL" if valor is None else str(int(valor))
+
+
+def _construir_query_suma_pliegos_incorrectos(num_op: str, actividad: str) -> str:
+    # Suma solo filas de operario (excluye 'F') para no acumular agregados anteriores (R-13).
+    return f"""SELECT SUM(pliegosIncorrectos)
+FROM smartfactory.resumenmarcajes
+WHERE actividad = '{actividad}'
+  AND numOp = '{num_op}'
+  AND (estado IS NULL OR estado <> 'F');"""
+
 
 def obtener_ultimo_resumen_recurso_usuario(recurso: str, username: str) -> dict[str, Any]:
     """
@@ -401,7 +430,13 @@ def _separar_fecha_hora_para_mqtt(fechatiempo: str) -> tuple[str, str]:
         return ahora.strftime("%Y/%m/%d"), ahora.strftime("%H:%M:%S")
 
 
-def simular_cierre_marcaje(marcaje: dict[str, Any], tipo_cierre: str, total_usuario: Any, pausa_improductiva: bool = False) -> dict[str, Any]:
+def simular_cierre_marcaje(
+    marcaje: dict[str, Any],
+    tipo_cierre: str,
+    total_usuario: Any,
+    pausa_improductiva: bool = False,
+    pliegos_incorrectos: int | None = None,
+) -> dict[str, Any]:
     """
     Simula el cierre de marcaje con las 3 rutas operativas:
     FINAL: finalización completa de actividad.
@@ -432,6 +467,17 @@ def simular_cierre_marcaje(marcaje: dict[str, Any], tipo_cierre: str, total_usua
     topic = limpiar_sql(marcaje.get("topic"))
     mac = limpiar_sql(marcaje.get("mac") or _mac_desde_topic(topic))
     total_usuario_limpio = limpiar_sql(total_usuario if total_usuario not in (None, "") else 0)
+
+    pliegos_validos, pliegos_incorrectos_valor = _validar_pliegos_incorrectos(pliegos_incorrectos)
+    if not pliegos_validos:
+        return {
+            "ok": False,
+            "mensaje": "Pliegos incorrectos inválido: debe ser un número entero mayor o igual a 0.",
+        }
+    # Los tiempos improductivos no registran pliegos: se guarda NULL (no registrado).
+    if str(num_op) == OP_IMPRODUCTIVO:
+        pliegos_incorrectos_valor = None
+    pliegos_incorrectos_sql = _sql_entero_o_null(pliegos_incorrectos_valor)
 
     faltantes = [
         nombre for nombre, valor in {
@@ -513,18 +559,18 @@ def simular_cierre_marcaje(marcaje: dict[str, Any], tipo_cierre: str, total_usua
 
     if pausa_improductiva:
         insert_resumen_usuario = f"""INSERT INTO smartfactory.resumenmarcajes
-    (numOp, recurso, actividad, cantidadcot, cantidadreal, username, tiempoinicio, tiempofinal, estado, totalUsuario, wo_number, tk_id, duracion, variable01)
+    (numOp, recurso, actividad, cantidadcot, cantidadreal, username, tiempoinicio, tiempofinal, estado, totalUsuario, wo_number, tk_id, duracion, pliegosIncorrectos, variable01)
 VALUES
     ('{num_op}', '{recurso}', '{actividad}', '{cantidad}', '{cantreal_calculada}', '{username}',
-     '{tmp_begin}', '{tmp_fin}', {insert_usuario_estado}, '{total_usuario_limpio}', '{limpiar_sql(wo_number)}', '{limpiar_sql(tk_id)}', '{duracion}', 1);"""
+     '{tmp_begin}', '{tmp_fin}', {insert_usuario_estado}, '{total_usuario_limpio}', '{limpiar_sql(wo_number)}', '{limpiar_sql(tk_id)}', '{duracion}', {pliegos_incorrectos_sql}, 1);"""
     else:
-        # Mantener exactamente el INSERT histórico para FINAL/MD/MT normales.
+        # INSERT histórico para FINAL/MD/MT normales + pliegosIncorrectos (v20.24).
         # variable01 conserva su DEFAULT NULL al no incluirse en la sentencia.
         insert_resumen_usuario = f"""INSERT INTO smartfactory.resumenmarcajes
-    (numOp, recurso, actividad, cantidadcot, cantidadreal, username, tiempoinicio, tiempofinal, estado, totalUsuario, wo_number, tk_id, duracion)
+    (numOp, recurso, actividad, cantidadcot, cantidadreal, username, tiempoinicio, tiempofinal, estado, totalUsuario, wo_number, tk_id, duracion, pliegosIncorrectos)
 VALUES
     ('{num_op}', '{recurso}', '{actividad}', '{cantidad}', '{cantreal_calculada}', '{username}',
-     '{tmp_begin}', '{tmp_fin}', {insert_usuario_estado}, '{total_usuario_limpio}', '{limpiar_sql(wo_number)}', '{limpiar_sql(tk_id)}', '{duracion}');"""
+     '{tmp_begin}', '{tmp_fin}', {insert_usuario_estado}, '{total_usuario_limpio}', '{limpiar_sql(wo_number)}', '{limpiar_sql(tk_id)}', '{duracion}', {pliegos_incorrectos_sql});"""
 
     delete_datossensados = f"""DELETE FROM smartfactory.datossensados
 WHERE numOp = '{num_op}'
@@ -539,19 +585,22 @@ WHERE numOp = '{num_op}'
     sql_bloques = [insert_resumen_usuario]
 
     insert_resumen_final = None
+    query_pliegos_final = None
     if tipo_cierre == "FINAL":
         query_agregado_final = f"""SELECT SUM(cantidadreal), MIN(tiempoinicio), MAX(tiempofinal), SUM(duracion)
 FROM smartfactory.resumenmarcajes
 WHERE actividad = '{actividad}'
   AND numOp = '{num_op}';"""
+        query_pliegos_final = _construir_query_suma_pliegos_incorrectos(num_op, actividad)
 
         insert_resumen_final = f"""/* Luego de insertar el resumen del usuario, se calcula el agregado de la actividad y se inserta el cierre final SMARTFACTORY. */
 INSERT INTO smartfactory.resumenmarcajes
-    (numOp, recurso, actividad, cantidadcot, cantidadreal, username, tiempoinicio, tiempofinal, duracion, estado, totalUsuario, wo_number, tk_id)
+    (numOp, recurso, actividad, cantidadcot, cantidadreal, username, tiempoinicio, tiempofinal, duracion, estado, totalUsuario, wo_number, tk_id, pliegosIncorrectos)
 VALUES
     ('{num_op}', '{recurso}', '{actividad}', '{cantidad}', '<SUM(cantidadreal)>', 'SMARTFACTORY',
-     '<MIN(tiempoinicio)>', '<MAX(tiempofinal)>', '<SUM(duracion)>', 'F', '{total_usuario_limpio}', '{limpiar_sql(wo_number)}', '{limpiar_sql(tk_id)}');"""
+     '<MIN(tiempoinicio)>', '<MAX(tiempofinal)>', '<SUM(duracion)>', 'F', '{total_usuario_limpio}', '{limpiar_sql(wo_number)}', '{limpiar_sql(tk_id)}', <SUM(pliegosIncorrectos) filas de usuario>);"""
         sql_bloques.append(query_agregado_final)
+        sql_bloques.append(query_pliegos_final)
         sql_bloques.append(insert_resumen_final)
 
     sql_bloques.append(delete_datossensados)
@@ -583,6 +632,7 @@ VALUES
                 "sql_completo": "\n\n".join(sql_bloques),
                 "insert_resumen_usuario": insert_resumen_usuario,
                 "insert_resumen_final": insert_resumen_final,
+                "query_pliegos_incorrectos_final": query_pliegos_final,
                 "delete_datossensados": delete_datossensados,
                 "delete_marcajeactivo": delete_marcajeactivo,
                 "query_wo_tk": query_wo_tk,
@@ -603,6 +653,7 @@ VALUES
                 "estado": None if tipo_cierre == "FINAL" else tipo_cierre,
                 "estado_final_smartfactory": "F" if tipo_cierre == "FINAL" else None,
                 "totalUsuario": total_usuario_limpio,
+                "pliegosIncorrectos": pliegos_incorrectos_valor,
                 "wo_number": wo_number,
                 "tk_id": tk_id,
                 "topic": topic,
@@ -616,7 +667,13 @@ VALUES
 
 
 
-def ejecutar_cierre_marcaje_real(marcaje: dict[str, Any], tipo_cierre: str, total_usuario: Any, pausa_improductiva: bool = False) -> dict[str, Any]:
+def ejecutar_cierre_marcaje_real(
+    marcaje: dict[str, Any],
+    tipo_cierre: str,
+    total_usuario: Any,
+    pausa_improductiva: bool = False,
+    pliegos_incorrectos: int | None = None,
+) -> dict[str, Any]:
     """
     Ejecuta el cierre real del marcaje según las 3 rutas operativas:
     FINAL: cierre definitivo de actividad, inserta resumen usuario + resumen SMARTFACTORY estado F.
@@ -627,7 +684,13 @@ def ejecutar_cierre_marcaje_real(marcaje: dict[str, Any], tipo_cierre: str, tota
     - Requiere SMARTFACTORY_ENABLE_REAL_DB_WRITES=1 para modificar BD.
     - FINAL/MD requieren SMARTFACTORY_ENABLE_REAL_MQTT_PUBLISH=1 para publicar paro al ESP.
     """
-    simulacion = simular_cierre_marcaje(marcaje, tipo_cierre, total_usuario, pausa_improductiva=pausa_improductiva)
+    simulacion = simular_cierre_marcaje(
+        marcaje,
+        tipo_cierre,
+        total_usuario,
+        pausa_improductiva=pausa_improductiva,
+        pliegos_incorrectos=pliegos_incorrectos,
+    )
 
     if not simulacion.get("ok"):
         return simulacion
@@ -724,7 +787,26 @@ def ejecutar_cierre_marcaje_real(marcaje: dict[str, Any], tipo_cierre: str, tota
                 }
 
         # 2. Insert resumen del usuario.
-        dtbSmartFactory(insert_usuario).consultaSmartFactory()
+        #    v20.24: si falla, se aborta ANTES del agregado y de los DELETE para no perder
+        #    la producción (el marcaje y datossensados quedan intactos y se puede reintentar).
+        resultado_insert_usuario = dtbSmartFactory(insert_usuario).consultaSmartFactory()
+        if resultado_insert_usuario != "Operación exitosa":
+            aviso_mqtt = (
+                " El paro MQTT ya fue publicado al ESP."
+                if resultado_mqtt.get("publicado") else ""
+            )
+            return {
+                "ok": False,
+                "modo": "INSERT_RESUMEN_FALLIDO",
+                "mensaje": (
+                    "No se pudo registrar el resumen del cierre en BD. "
+                    "No se eliminó el marcaje activo ni sus datos sensados; puede reintentar el cierre."
+                    + aviso_mqtt
+                ),
+                "resultado_mqtt": resultado_mqtt,
+                "queries_ejecutados_antes_error": queries_ejecutados,
+                "simulacion": sim,
+            }
         queries_ejecutados.append(insert_usuario)
 
         # 3. Si es FINAL, calcular agregado después de insertar usuario e insertar resumen SMARTFACTORY.
@@ -751,19 +833,29 @@ def ejecutar_cierre_marcaje_real(marcaje: dict[str, Any], tipo_cierre: str, tota
                 fin = valores.get("tiempofinal")
                 duracion = valores.get("duracion_minutos") or 0
 
+            # Pliegos incorrectos de la fila F = suma de las filas de operario (sin 'F').
+            # Si la consulta falla o no hay valores, se guarda NULL (no registrado).
+            query_pliegos = _construir_query_suma_pliegos_incorrectos(num_op, actividad)
+            suma_pliegos = dtbSmartFactory(query_pliegos).consultaSmartFactory()
+            queries_ejecutados.append(query_pliegos)
+            pliegos_incorrectos_final = None
+            if suma_pliegos and suma_pliegos[0][0] is not None:
+                pliegos_incorrectos_final = int(suma_pliegos[0][0])
+
             agregado_final = {
                 "cantidadreal": total_cantidad,
                 "tiempoinicio": str(inicio),
                 "tiempofinal": str(fin),
                 "duracion": duracion,
+                "pliegosIncorrectos": pliegos_incorrectos_final,
             }
 
             insert_final_ejecutado = f"""
                 INSERT INTO smartfactory.resumenmarcajes
-                    (numOp, recurso, actividad, cantidadcot, cantidadreal, username, tiempoinicio, tiempofinal, duracion, estado, totalUsuario, wo_number, tk_id)
+                    (numOp, recurso, actividad, cantidadcot, cantidadreal, username, tiempoinicio, tiempofinal, duracion, estado, totalUsuario, wo_number, tk_id, pliegosIncorrectos)
                 VALUES
                     ('{num_op}', '{recurso}', '{actividad}', '{limpiar_sql(valores.get('cantidadcot'))}', '{limpiar_sql(total_cantidad)}', 'SMARTFACTORY',
-                     '{limpiar_sql(inicio)}', '{limpiar_sql(fin)}', '{limpiar_sql(duracion)}', 'F', '{limpiar_sql(valores.get('totalUsuario'))}', '{limpiar_sql(valores.get('wo_number'))}', '{limpiar_sql(valores.get('tk_id'))}')
+                     '{limpiar_sql(inicio)}', '{limpiar_sql(fin)}', '{limpiar_sql(duracion)}', 'F', '{limpiar_sql(valores.get('totalUsuario'))}', '{limpiar_sql(valores.get('wo_number'))}', '{limpiar_sql(valores.get('tk_id'))}', {_sql_entero_o_null(pliegos_incorrectos_final)})
             """
             dtbSmartFactory(insert_final_ejecutado).consultaSmartFactory()
             queries_ejecutados.append(insert_final_ejecutado)

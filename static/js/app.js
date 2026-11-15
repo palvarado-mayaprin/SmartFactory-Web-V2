@@ -254,6 +254,12 @@ function mostrarPanelCierreMarcajeUsuario(marcaje) {
         <strong>Modo:</strong> ${marcaje.modo || "No especificado"}
     `;
 
+    // Pliegos incorrectos (v20.24): siempre empieza en 0; no aplica a tiempos improductivos (OP 12345).
+    const inputPliegosIncorrectos = document.getElementById("pliegosIncorrectosCierre");
+    if (inputPliegosIncorrectos) inputPliegosIncorrectos.value = "0";
+    document.getElementById("campoPliegosIncorrectos")
+        ?.classList.toggle("hidden", String(marcaje.numOp || "") === "12345");
+
     card.classList.remove("hidden");
 }
 
@@ -658,7 +664,24 @@ async function reabrirActividadDespuesImproductivo(contexto) {
     }
 }
 
+// Evita enviar dos cierres del mismo marcaje por doble clic (v20.24).
+let cierreEnCurso = false;
+
 async function ejecutarCierreRealMarcajeActivoDelUsuario(opciones = {}) {
+    if (cierreEnCurso) {
+        log("Ya hay un cierre en proceso. Espere a que termine.", true);
+        return;
+    }
+
+    cierreEnCurso = true;
+    try {
+        return await procesarCierreRealMarcajeActivoDelUsuario(opciones);
+    } finally {
+        cierreEnCurso = false;
+    }
+}
+
+async function procesarCierreRealMarcajeActivoDelUsuario(opciones = {}) {
     if (!marcajeActivoUsuario) {
         log("No hay marcaje activo cargado para ejecutar cierre real.", true);
         return;
@@ -668,6 +691,35 @@ async function ejecutarCierreRealMarcajeActivoDelUsuario(opciones = {}) {
     const tipoCierre = opciones.tipoCierreForzado || document.getElementById("tipoCierreMarcaje").value;
     const valorTotalUsuario = String(document.getElementById("totalUsuarioCierre").value ?? "").trim();
     const totalUsuario = valorTotalUsuario === "" ? 0 : valorTotalUsuario;
+
+    // Pliegos incorrectos (v20.24): dato independiente de los pliegos buenos y de cantidadreal.
+    // En tiempos improductivos (OP 12345) no se solicita y se envía null.
+    const esImproductivo = String(marcajeActivoUsuario.numOp || "") === "12345";
+    const inputPliegosIncorrectos = document.getElementById("pliegosIncorrectosCierre");
+    let pliegosIncorrectos = null;
+
+    if (!esImproductivo && inputPliegosIncorrectos) {
+        const validacion = inputPliegosIncorrectos.validity?.badInput
+            ? { ok: false, mensaje: "Pliegos incorrectos debe ser un número entero mayor o igual a 0, sin decimales." }
+            : validarPliegosIncorrectos(inputPliegosIncorrectos.value);
+
+        if (!validacion.ok) {
+            await Swal.fire({
+                icon: "warning",
+                title: "Pliegos incorrectos inválidos",
+                text: validacion.mensaje,
+                confirmButtonText: "Entendido"
+            });
+            inputPliegosIncorrectos.focus();
+            return;
+        }
+
+        pliegosIncorrectos = validacion.valor;
+    }
+
+    const resumenPliegos = pliegosIncorrectos === null ? "" : `
+            <strong>Pliegos buenos (total reportado):</strong> ${escaparHtml(totalUsuario)}<br>
+            <strong>Pliegos incorrectos:</strong> ${pliegosIncorrectos}<br>`;
 
     // Para OP 12345 se conserva el último resumen ANTES del cierre. Si se consultara
     // después, el improductivo recién cerrado sería el registro más reciente.
@@ -680,7 +732,7 @@ async function ejecutarCierreRealMarcajeActivoDelUsuario(opciones = {}) {
             <strong>Tipo cierre:</strong> ${tipoCierre}<br>
             <strong>OP:</strong> ${marcajeActivoUsuario.numOp || "Sin OP"}<br>
             <strong>Actividad:</strong> ${marcajeActivoUsuario.actividad || "Sin actividad"}<br>
-            <strong>Recurso:</strong> ${marcajeActivoUsuario.recurso || "Sin recurso"}<br><br>
+            <strong>Recurso:</strong> ${marcajeActivoUsuario.recurso || "Sin recurso"}<br>${resumenPliegos}<br>
             Al confirmar, se procesará el cierre real del marcaje.
         `,
         showCancelButton: true,
@@ -715,7 +767,8 @@ async function ejecutarCierreRealMarcajeActivoDelUsuario(opciones = {}) {
             marcaje: marcajeActivoUsuario,
             tipo_cierre: tipoCierre,
             total_usuario: totalUsuario,
-            pausa_improductiva: pausaImproductiva
+            pausa_improductiva: pausaImproductiva,
+            pliegos_incorrectos: pliegosIncorrectos
         });
 
         log(datos.mensaje || "Cierre real ejecutado correctamente.");

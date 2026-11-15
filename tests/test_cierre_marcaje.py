@@ -78,13 +78,16 @@ def test_publicacion_fallida_aborta_sin_tocar_bd(bd, mqtt, escritura_habilitada)
 
 
 @pytest.mark.caracterizacion
-def test_insert_resumen_fallido_borra_igual_y_responde_ok(bd, escritura_habilitada):
-    """R-01: cierre no atómico; el fallo del INSERT no detiene los DELETE."""
+def test_insert_resumen_fallido_aborta_sin_delete(bd, mqtt, escritura_habilitada):
+    """R-01 (parcial, decisión Fase 6, 2026-11-14): si falla el INSERT del operario se aborta
+    antes del agregado y de los DELETE; el paro MQTT (MD) ya se publicó y se avisa."""
     preparar(bd)
     bd.responder(r"INSERT INTO smartfactory.resumenmarcajes", None)
     r = ejecutar_cierre_marcaje_real(MARCAJE, "MD", 0)
-    assert r["ok"] is True
-    assert bd.secuencia()[-2:] == ["DELETE FROM smartfactory.datossensados", "DELETE FROM smartfactory.marcajeactivo"]
+    assert r["ok"] is False and r["modo"] == "INSERT_RESUMEN_FALLIDO"
+    assert "paro MQTT ya fue publicado" in r["mensaje"]
+    assert not any(s.startswith("DELETE") for s in bd.escrituras())
+    assert len(mqtt.publicaciones) == 1
 
 
 @pytest.mark.caracterizacion

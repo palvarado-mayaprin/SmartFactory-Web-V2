@@ -14,7 +14,7 @@
                     <img src="/static/img/logo_mayaprin.png" alt="Mayaprin" class="brand-logo">
                 </div>
                 <div>
-                    <p class="eyebrow">SmartFactory Web · v20.23</p>
+                    <p class="eyebrow">SmartFactory Web · v20.24</p>
                     <h1>Control operacional de planta</h1>
                     <p class="subtitle">Sistema MES en tiempo real para marcajes, producción y trazabilidad.</p>
                 </div>
@@ -127,6 +127,11 @@
                     <label for="totalUsuarioCierre">Total reportado por usuario</label>
                     <input id="totalUsuarioCierre" type="number" min="0" step="1" placeholder="Cantidad manual reportada por el operario">
 
+                    <div id="campoPliegosIncorrectos">
+                        <label for="pliegosIncorrectosCierre">Pliegos incorrectos</label>
+                        <input id="pliegosIncorrectosCierre" type="number" min="0" step="1" value="0" inputmode="numeric" placeholder="Pliegos rechazados o incorrectos">
+                    </div>
+
                     <div class="button-row">
                         <button class="danger-action" onclick="ejecutarCierreRealMarcajeActivoDelUsuario()">Ejecutar cierre</button>
                         <button class="pause-improductive-action" onclick="ejecutarPausaPorActividadImproductiva()">PAUSA POR ACTIVIDAD IMPRODUCTIVA</button>
@@ -203,6 +208,7 @@
     </main>
 
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="/static/js/cierre_validacion.js"></script>
     <script src="/static/js/app.js"></script>
 </body>
 </html>
