@@ -1,0 +1,23 @@
+# ============================================================
+# SmartFactory Web — entorno de PRUEBAS (.venv-test)
+# ============================================================
+# Crear:   venv\Scripts\python.exe -m venv .venv-test
+#          .venv-test\Scripts\python.exe -m pip install -r requirements-dev.txt
+# Ejecutar: .venv-test\Scripts\python.exe -m pytest
+#
+# Las versiones de la app coinciden con las del venv de producción (2026-11-13).
+#
+# AISLAMIENTO INTENCIONAL: NO se instalan mysql-connector-python, pyodbc
+# ni paho-mqtt. Así, aunque falle un doble de pruebas, este entorno
+# no puede conectarse a MySQL, SQL Server ni al broker MQTT.
+# No añadas esos paquetes aquí. Para pruebas contra una BD de DESARROLLO,
+# ver docs/ai/13-entorno-desarrollo-bd.md.
+
+fastapi==0.136.1
+starlette==1.0.0
+pydantic==2.13.4
+jinja2==3.1.6
+anyio==4.13.0
+
+pytest==8.4.2
+httpx==0.28.1

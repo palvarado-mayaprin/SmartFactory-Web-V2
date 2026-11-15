@@ -13,6 +13,7 @@ __pycache__/
 # Entornos virtuales
 venv/
 .venv/
+.venv-test/
 env/
 ENV/
 
