@@ -48,10 +48,10 @@
 
 | Tabla | Operación | Archivo::función (línea) | Disparador |
 |---|---|---|---|
-| `marcajeactivo` | INSERT | `persistencia_marcajes_service::iniciar_marcaje_real_bd` (248), `::iniciar_marcaje_improductivo_bd` (387) | Apertura productiva, improductiva o relevo |
-| `marcajeactivo` | DELETE (`numOp+actividad+username`) | `cierres_service::ejecutar_cierre_marcaje_real` (868) | Cierre FINAL/MD/MT |
-| `marcajeactivo` | DELETE (`username+numOp+recurso+actividad[+topic]` LIMIT 1) | `persistencia_marcajes_service::cerrar_marcaje_real_bd` (531) | Endpoint heredado `cerrar-real-bd`, **sin uso en la UI** |
-| `marcajeactivo` | SELECT | `usuarios_service::consultar_marcaje_activo`, `marcajes_service::consultar_marcaje_activo_por_recurso_o_topic`, `persistencia_marcajes_service::validar_apertura_marcaje_real`, `::listar_marcajes_activos_bd`, `cierres_service::ejecutar_cierre_marcaje_real` (733) | Validaciones y sincronización |
+| `marcajeactivo` | INSERT | `persistencia_marcajes_service::iniciar_marcaje_real_bd` (305), `::iniciar_marcaje_improductivo_bd` (461) | Apertura productiva, improductiva o relevo. Desde el 2026-11-24 escribe también `wo_number`, `tk_id`, `estadoResolucion` y `tituloOt` (`marcajes_service::construir_insert_marcajeactivo`) |
+| `marcajeactivo` | DELETE (`numOp+actividad+username`) | `cierres_service::ejecutar_cierre_marcaje_real` (922) | Cierre FINAL/MD/MT |
+| `marcajeactivo` | DELETE (`username+numOp+recurso+actividad[+topic]` LIMIT 1) | `persistencia_marcajes_service::cerrar_marcaje_real_bd` (605) | Endpoint heredado `cerrar-real-bd`, **sin uso en la UI** |
+| `marcajeactivo` | SELECT | `usuarios_service::consultar_marcaje_activo`, `marcajes_service::consultar_marcaje_activo_por_recurso_o_topic`, `persistencia_marcajes_service::validar_apertura_marcaje_real`, `::listar_marcajes_activos_bd`, `cierres_service::ejecutar_cierre_marcaje_real` (787), `cierres_service::_obtener_ot_fijada` (OT fijada, 2026-11-24) | Validaciones, sincronización y OT del cierre |
 | `resumenmarcajes` | INSERT fila de usuario | `cierres_service::ejecutar_cierre_marcaje_real` (792). Texto armado en `simular_cierre_marcaje` (558-573) | Todo cierre |
 | `resumenmarcajes` | INSERT fila `SMARTFACTORY`/`F` | `cierres_service::ejecutar_cierre_marcaje_real` (853-860) | Solo FINAL |
 | `resumenmarcajes` | SELECT SUM MT, agregado FINAL, último registro | `_obtener_suma_mt_anterior` (320), `ejecutar_cierre_marcaje_real` (816-822), `obtener_ultimo_resumen_recurso_usuario` (58-102) | Cálculo y flujos posteriores |
@@ -69,11 +69,14 @@ Columnas de `resumenmarcajes` que la web **no escribe** [C]: `enviado`, `producc
 ### Funciones de cada tabla según la documentación histórica [I]
 
 - `marcajeactivo`: marcajes abiertos en este momento. Una fila por operario activo.
+  - **Columnas de la OT fijada al abrir** (migración aplicada en producción por el usuario, informada el 2026-11-24; `14-resolucion-ot.md` §2.4), todas nulables: `wo_number INT`, `tk_id INT`, `estadoResolucion VARCHAR(12)` (`AUTOMATICA`/`ELEGIDA`/`SIN_TAREA`) y `tituloOt VARCHAR(60)`.
+  - Escriben: las aperturas productiva, improductiva (`SIN_TAREA`) y de relevo (heredadas). Las rutas sin resolución (`preparar-inicio`/`simular-inicio`, solo vista previa) dejan `NULL`.
+  - Lee: `cierres_service::_obtener_ot_fijada`, que copia `wo_number`/`tk_id` a `resumenmarcajes` (fila del operario y fila `F`). `listar_marcajes_activos_bd` **no** las lee (la memoria no las conoce).
 - `datossensados`: tabla **temporal operativa**. Se limpia al cerrar (README_V20 "Notas importantes").
 - `mensajes_mqtt`: **histórico permanente** (README_V20).
 - `resumenmarcajes`: resultado contable de cada marcaje. La fila `F` es el agregado de la actividad.
 
-### Valores de `resumenmarcajes.estado` [C] (`cierres_service.py:558`, `857`)
+### Valores de `resumenmarcajes.estado` [C] (`cierres_service.py:610`, `857`)
 
 | Valor | Significado |
 |---|---|
@@ -89,9 +92,10 @@ Columnas de `resumenmarcajes` que la web **no escribe** [C]: `enviado`, `producc
 | Tabla | Uso | Archivo |
 |---|---|---|
 | `staf` | Operarios (`staf_code`, `staf_name`, `staf_resource`, `staf_discontinued`) | `services/usuarios_service.py:34-43` |
-| `wo200` | OT → OP real (`wo_job`) | `services/ordenes_service.py:110` |
-| `job200` | Descripción y cantidad de la OP | `services/ordenes_service.py:118` |
-| `wo_task200`, `act`, `cc` | Recursos y actividades | `services/ordenes_service.py:24-31, 176-228` |
+| `job200` | Existencia, elegibilidad (`j_status`, `j_state`, `j_locked`), descripción y cantidad de la OP (desde 2026-11-24) | `services/resolucion_ot_service.py::leer_op` |
+| `wo`, `wo_task200` | OT de la OP (`wo_job`) y tareas de la actividad para resolver la OT (desde 2026-11-24) | `services/resolucion_ot_service.py::resolver_desde_optimus` |
+| `wo200` | Solo la lista de recursos (sin filtrar por OP, R-10). Ya no se usa para buscar la OP | `services/ordenes_service.py:21-28` |
+| `wo_task200`, `wo`, `act`, `cc` | Recursos y actividades vigentes de cualquier OT de la OP (`act_discont = '0'`) | `services/ordenes_service.py:21-28, 159-220` |
 | `wo` | `wo_number`/`tk_id` para el resumen | `services/cierres_service.py:275-307` |
 
 ### ⚠️ `username` no significa lo mismo en todas partes [C] (E4, Fase 4)
@@ -99,8 +103,8 @@ Columnas de `resumenmarcajes` que la web **no escribe** [C]: `enviado`, `producc
 | Dónde | Contenido de `username` | Evidencia |
 |---|---|---|
 | Respuesta de identificación (`usuario.username` en la UI) | **`staf_name`** (nombre del operario) | `services/usuarios_service.py:46-52` |
-| `smartfactory.marcajeactivo.username` y `resumenmarcajes.username` (filas de usuario) | **`staf_code`** (el `codigo_usuario` que envía la UI) | `services/marcajes_service.py:353, 395`; `services/persistencia_marcajes_service.py:114` |
-| `resumenmarcajes.username` en filas `F` | Literal `'SMARTFACTORY'` | `services/cierres_service.py:853-859` |
+| `smartfactory.marcajeactivo.username` y `resumenmarcajes.username` (filas de usuario) | **`staf_code`** (el `codigo_usuario` que envía la UI) | `services/marcajes_service.py:386, 428`; `services/persistencia_marcajes_service.py:119` |
+| `resumenmarcajes.username` en filas `F` | Literal `'SMARTFACTORY'` | `services/cierres_service.py:907-913` |
 | `smartfactory.superusuarios.username` | Login del usuario elevado | `services/auth_service.py:16-58` |
 
 En la UI, el código del operario está en `usuarioActual.code`. Para buscar, filtrar o comparar marcajes usa el **código** (`staf_code`), nunca `usuarioActual.username`.

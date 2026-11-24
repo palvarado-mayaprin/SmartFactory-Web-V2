@@ -1,11 +1,8 @@
 from typing import Dict, Any, List, Tuple
 
 from db.conexion import dtbOptimus1, dtbEntregasDiarias, dtbSmartFactory
+from services.resolucion_ot_service import es_numero_op, leer_op
 from services.usuarios_service import identificar_usuario_prueba
-
-
-def _limpiar_numero_op(num_op: str) -> str:
-    return "".join(ch for ch in str(num_op).strip() if ch.isdigit())
 
 
 def _normalizar_recurso(fila) -> Tuple[str, str]:
@@ -14,7 +11,7 @@ def _normalizar_recurso(fila) -> Tuple[str, str]:
     return codigo, nombre
 
 
-def obtener_recursos_de_orden(num_ot: str) -> List[Dict[str, str]]:
+def obtener_recursos_de_orden() -> List[Dict[str, str]]:
     """
     Replica la lógica actual de PyQt:
     1. Obtiene recursos cotizados desde Optimus.
@@ -33,7 +30,7 @@ def obtener_recursos_de_orden(num_ot: str) -> List[Dict[str, str]]:
     
     print(recursos_optimus_raw)
 
-    #orden_trabajo = str(num_ot)[:-2]
+    #orden_trabajo = str(num_op)
     #query_prodigos = f"""
     #    SELECT DISTINCT(recurso), recursoNombre
     #    FROM entregasDiarias.dbo.relacionalProgramacion
@@ -93,38 +90,19 @@ def buscar_orden_produccion(num_op: str, codigo_usuario: str) -> Dict[str, Any]:
     """
     Migra la lógica base de ingreso de OP, separada de la interfaz.
     """
-    op_limpia = _limpiar_numero_op(num_op)
-
-    if not op_limpia:
-        return {"ok": False, "mensaje": "Debe ingresar una OP válida."}
-
-    if not (10000 <= int(op_limpia) <= 1_000_000):
-        return {"ok": False, "mensaje": "Número de OP fuera del rango permitido."}
+    # Sin rango 10 000-1 000 000 (P-20): la OP debe ser numérica, existir y ser elegible.
+    lectura = leer_op(num_op)
+    if not lectura["ok"]:
+        return lectura
 
     usuario = identificar_usuario_prueba(codigo_usuario)
     if not usuario:
         return {"ok": False, "mensaje": "Usuario no encontrado."}
 
-    num_ot = f"{op_limpia}01"
+    orden = lectura["orden"]
+    num_op_real = orden["num_op"]
 
-    query_wo = "SELECT wo_job FROM mayaprin.wo200 WHERE wo_number = %s"
-    resultado_wo = dtbOptimus1(query_wo, (num_ot,)).consultaOptimus()
-
-    if not resultado_wo:
-        return {"ok": False, "mensaje": "Número de OP incorrecto o no encontrado."}
-
-    num_op_real = str(resultado_wo[0][0])
-
-    query_info = "SELECT j_title1, j_quantity FROM mayaprin.job200 WHERE j_number = %s"
-    info_op = dtbOptimus1(query_info, (num_op_real,)).consultaOptimus()
-
-    if not info_op:
-        return {"ok": False, "mensaje": "No se encontró información de la orden."}
-
-    descripcion = info_op[0][0]
-    cantidad = info_op[0][1]
-
-    recursos = obtener_recursos_de_orden(num_ot)
+    recursos = obtener_recursos_de_orden()
 
     recurso_usuario = ""
     usuario_resource = usuario.get("resource") or ""
@@ -137,16 +115,15 @@ def buscar_orden_produccion(num_op: str, codigo_usuario: str) -> Dict[str, Any]:
 
     actividades_sugeridas = []
     if recurso_usuario:
-        actividades_sugeridas = obtener_actividades_por_recurso(num_ot, recurso_usuario)
+        actividades_sugeridas = obtener_actividades_por_recurso(num_op_real, recurso_usuario)
 
     return {
         "ok": True,
         "usuario": usuario,
         "orden": {
             "num_op": num_op_real,
-            "num_ot": num_ot,
-            "descripcion": descripcion,
-            "cantidad": cantidad,
+            "descripcion": orden["descripcion"],
+            "cantidad": orden["cantidad"],
         },
         "recursos": recursos,
         "recurso_usuario": recurso_usuario,
@@ -173,17 +150,34 @@ def buscar_recursos_improductivo(codigo_usuario: str) -> Dict[str, Any]:
     }
 
 
-def obtener_actividades_por_recurso(num_ot: str, recurso: str) -> List[Dict[str, Any]]:
+def _validar_num_op(num_op: str) -> str:
+    if not es_numero_op(num_op):
+        raise ValueError("El número de OP debe contener solo dígitos.")
+    return str(num_op).strip()
+
+
+def obtener_actividades_por_recurso(num_op: str, recurso: str) -> List[Dict[str, Any]]:
+    """
+    Actividades vigentes del centro de costo con alguna tarea en CUALQUIER OT de la OP
+    (sin filtrar el estado de la tarea). docs/ai/14-resolucion-ot.md §2.2.
+    """
+    op = _validar_num_op(num_op)
     query = """
-        SELECT DISTINCT wo_task200.tk_code, act.act_name
-        FROM wo_task200
-        INNER JOIN act ON wo_task200.tk_code = act.act_code
-        WHERE tk_wonum = %s
-          AND act.act_cc = %s
+        SELECT act.act_code, act.act_name
+        FROM act
+        WHERE act.act_cc = %s
+          AND act.act_discont = '0'
+          AND EXISTS (
+              SELECT 1
+              FROM wo_task200 wt
+              INNER JOIN wo ON wo.wo_number = wt.tk_wonum
+              WHERE wo.wo_job = %s
+                AND wt.tk_code = act.act_code
+          )
         ORDER BY act.act_name
     """
 
-    resultado = dtbOptimus1(query, (num_ot, recurso)).consultaOptimus()
+    resultado = dtbOptimus1(query, (recurso, op)).consultaOptimus()
 
     if not resultado:
         return []
@@ -191,32 +185,30 @@ def obtener_actividades_por_recurso(num_ot: str, recurso: str) -> List[Dict[str,
     return [{"codigo": fila[0], "nombre": fila[1]} for fila in resultado]
 
 
-def obtener_actividades_no_cotizadas_por_recurso(num_ot: str, recurso: str) -> List[Dict[str, Any]]:
+def obtener_actividades_no_cotizadas_por_recurso(num_op: str, recurso: str) -> List[Dict[str, Any]]:
     """
-    Devuelve actividades disponibles en mayaprin.act para el recurso,
-    excluyendo las actividades ya cotizadas en la OT para ese mismo recurso.
+    Actividades vigentes del centro de costo SIN tarea en ninguna OT de la OP.
 
-    Equivalente web del popup PyQt de actividad extra/no cotizada:
-    - consulta el catálogo general de actividades por recurso;
-    - compara contra las actividades cotizadas;
-    - devuelve solo las que aún no están visibles en el marcaje.
+    Equivalente web del popup PyQt de actividad extra/no cotizada: catálogo del
+    recurso menos las actividades cotizadas (docs/ai/14-resolucion-ot.md §2.2).
     """
+    op = _validar_num_op(num_op)
     query = """
-        SELECT DISTINCT act.act_code, act.act_name
-        FROM mayaprin.act act
+        SELECT act.act_code, act.act_name
+        FROM act
         WHERE act.act_cc = %s
+          AND act.act_discont = '0'
           AND NOT EXISTS (
               SELECT 1
-              FROM mayaprin.wo_task200 wt
-              INNER JOIN mayaprin.act act_cot ON wt.tk_code = act_cot.act_code
-              WHERE wt.tk_wonum = %s
-                AND act_cot.act_cc = %s
+              FROM wo_task200 wt
+              INNER JOIN wo ON wo.wo_number = wt.tk_wonum
+              WHERE wo.wo_job = %s
                 AND wt.tk_code = act.act_code
           )
         ORDER BY act.act_name
     """
 
-    resultado = dtbOptimus1(query, (recurso, num_ot, recurso)).consultaOptimus()
+    resultado = dtbOptimus1(query, (recurso, op)).consultaOptimus()
 
     if not resultado:
         return []

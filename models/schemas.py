@@ -17,8 +17,13 @@ class BuscarRecursosImproductivoRequest(BaseModel):
 
 
 class ActividadesRequest(BaseModel):
-    num_ot: str = Field(..., min_length=1, description="Número OT completo usado en wo_number/tk_wonum")
+    num_op: str = Field(..., pattern=r"^[0-9]+$", description="Número de OP (j_number / wo_job), solo dígitos")
     recurso: str = Field(..., min_length=1, description="Centro de costo/recurso seleccionado")
+
+
+class OtsActividadRequest(BaseModel):
+    num_op: str = Field(..., pattern=r"^[0-9]+$", description="Número de OP (j_number / wo_job), solo dígitos")
+    actividad: str = Field(..., pattern=r"\S", description="Código de actividad (tk_code)")
 
 
 class UltimoResumenRecursoUsuarioRequest(BaseModel):
@@ -28,7 +33,8 @@ class UltimoResumenRecursoUsuarioRequest(BaseModel):
 
 class PrepararMarcajeRequest(BaseModel):
     num_op: str = Field(..., min_length=1, description="Número de OP real/job")
-    num_ot: str = Field(..., min_length=1, description="Número OT, normalmente OP + 01")
+    # 2026-11-24: la OT se resuelve en el servidor; los campos extra que envíe el navegador se ignoran.
+    numero_ot: int | None = Field(None, ge=1, description="OT elegida por el operario cuando la actividad está en varias OT")
     descripcion: str = Field(..., min_length=1, description="Descripción de la orden")
     cantidad: str | int | float = Field(..., description="Cantidad cotizada")
     recurso: str = Field(..., min_length=1, description="Centro de costo/recurso")

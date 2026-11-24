@@ -2,7 +2,7 @@
 
 Documentación para desarrolladores y para sesiones de Claude Code. Entrada principal: `CLAUDE.md` (raíz).
 
-**Base verificada**: commit `3d325c0` (2026-10-12) más el cambio `OR recursoalternativo` en `services/marcajes_service.py:32` (P-09) y v20.24 (pliegos incorrectos). Última revisión: 2026-11-15.
+**Base verificada**: commit `3d325c0` (2026-10-12) más el cambio `OR recursoalternativo` en `services/marcajes_service.py:32` (P-09) y v20.24 (pliegos incorrectos); v20.25 (resolución de OT, `14-resolucion-ot.md`). Última revisión: 2026-11-24.
 Si el código cambió después, **las referencias `archivo:línea` pueden haberse desplazado**: confirma siempre con Grep antes de actuar.
 
 ## Etiquetas de certeza (obligatorias)
@@ -38,6 +38,7 @@ Además, cada documento separa estos cinco planos. **No los mezcles**:
 | [11-pruebas.md](11-pruebas.md) | Infraestructura pytest aislada, fixtures, pruebas existentes, estrategia por tipo de cambio | Vas a validar un cambio |
 | [12-procedimiento-desarrollo.md](12-procedimiento-desarrollo.md) | **Procedimiento de 10 pasos**, matriz de autonomía, estrategia frontend/backend, mantenimiento | Siempre |
 | [13-entorno-desarrollo-bd.md](13-entorno-desarrollo-bd.md) | Propuesta (no implementada) de aislamiento de MySQL por entorno | Vas a necesitar SQL real o escrituras en desarrollo |
+| [14-resolucion-ot.md](14-resolucion-ot.md) | Diseño (no implementado) de la resolución de OT y tarea al abrir, adaptado de PRODIGOS V2 | Vas a tocar OP, OT, actividades o la tarea que se guarda en el resumen |
 | [auditoria/](auditoria/) | Instantáneas históricas de las fases 1 y 2 (no se editan) | Para rastrear el origen de un hallazgo |
 
 ## Fuentes de evidencia

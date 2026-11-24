@@ -11,10 +11,11 @@ Leyenda de **Efecto**: L = solo lectura · M = escribe en la memoria del proceso
 | GET `/` | `main.py::inicio` | L | Sí | Sirve `templates/index.html` |
 | GET `/api/health` | `main.py::health_check` | L | `revisarBackend` | |
 | POST `/api/usuario/identificar-prueba` | `usuarios_api` → `identificar_usuario_prueba`, `consultar_marcaje_activo` | L | `identificarUsuario` | 404 si el usuario no existe **o si falla Optimus** (R-03) |
-| POST `/api/op/buscar` | `ordenes_api` → `buscar_orden_produccion` | L | `buscarOp`, ARR, retorno | Recursos sin filtrar por OT (R-10) |
+| POST `/api/op/buscar` | `ordenes_api` → `buscar_orden_produccion` | L | `buscarOp`, ARR, retorno | OP numérica, existente y elegible en `job200` (sin rango, P-20). 400 con `detail` texto. Desde v20.25 ya no devuelve `orden.num_ot`. Recursos sin filtrar por OT (R-10) |
+| POST `/api/op/ots` (2026-11-24) | `ordenes_api` → `resolucion_ot_service::resolver_desde_optimus` | L | `elegirOtParaInicio` (inicio normal y, tras un 409 de OT, reapertura tras improductivo) | `{num_op, actividad}` → 200 `{ok, requiereEleccion, ots:[{numeroOt, titulo, secuencia}]}`; 409 rechazo de la OP y 503 `OPTIMUS_NO_DISPONIBLE`, ambos con `detail={ok, codigo, mensaje}`; 422 si `num_op` no es solo dígitos o `actividad` está en blanco |
 | POST `/api/op/buscarRecursosExistentes` | `ordenes_api` → `buscar_recursos_improductivo` | L | `SeleccionarRecurso` | Todos los recursos de `macdirectorio` |
-| POST `/api/actividades/recurso` | `obtener_actividades_por_recurso` | L | Sí | |
-| POST `/api/actividades/no-cotizadas` | `obtener_actividades_no_cotizadas_por_recurso` | L | Sí | |
+| POST `/api/actividades/recurso` | `obtener_actividades_por_recurso` | L | Sí | Recibe `{num_op, recurso}` (antes `num_ot`; 422 si `num_op` no es solo dígitos). Vigentes con tarea en cualquier OT de la OP |
+| POST `/api/actividades/no-cotizadas` | `obtener_actividades_no_cotizadas_por_recurso` | L | Sí | Recibe `{num_op, recurso}` (antes `num_ot`). Vigentes sin tarea en ninguna OT de la OP |
 | POST `/api/auth/usuario-elevado` | `auth_service::validar_usuario_elevado` | L | `abrirLoginUsuarioElevado` | Contraseña comparada en claro en SQL. 401/403. No emite token |
 | POST `/api/mqtt/iniciar` | `mqtt_monitor.iniciar` | Conexión | Panel ADMIN | |
 | POST `/api/mqtt/detener` | `mqtt_monitor.detener` | Conexión | Panel ADMIN | Detiene la persistencia DATOS y bloquea los cierres FINAL/MD |
@@ -23,10 +24,10 @@ Leyenda de **Efecto**: L = solo lectura · M = escribe en la memoria del proceso
 | GET `/api/marcajes/modo-persistencia` | flags | L | Sí | |
 | POST `/api/marcajes/preparar-inicio` | `preparar_inicio_marcaje` | L | No (heredado) | |
 | POST `/api/marcajes/simular-inicio` | `simular_inicio_marcaje` | L | No (heredado) | |
-| POST `/api/marcajes/iniciar-real-bd` | `persistencia_marcajes_service::iniciar_marcaje_real_bd` | **BD + MQTT + M + WS** | `seleccionarActividad`, retorno | 409 ante bloqueo |
+| POST `/api/marcajes/iniciar-real-bd` | `persistencia_marcajes_service::iniciar_marcaje_real_bd` | **BD + MQTT + M + WS** | `seleccionarActividad`, retorno | 409 ante bloqueo. (2026-11-24) `PrepararMarcajeRequest` ya no tiene `num_ot` (se ignora si llega) y acepta **`numero_ot: int ≥ 1` opcional**. Resuelve la OT antes de cualquier efecto: rechazo → 409 `detail={ok:false, modo:'RESOLUCION_OT', codigo, mensaje, ots_candidatas?}`; **`OPTIMUS_NO_DISPONIBLE` → 503**. La respuesta correcta incluye `resolucion` |
 | POST `/api/marcajes/iniciar-improductivo` | `::iniciar_marcaje_improductivo_bd` | **BD + MQTT + M + WS** | Improductivo y pausa | El handler se llama igual que el anterior (`api_iniciar_marcaje_real_bd`, línea 102). La ruta funciona [C] |
-| POST `/api/marcajes/iniciar-improductivo-bd` | **`iniciar_marcaje_real_bd` (productivo)** | BD + MQTT + M + WS | No | Nombre engañoso (`api/marcajes_api.py:125-147`) |
-| POST `/api/marcajes/iniciar-relevo-mt-real` | `::iniciar_relevo_mt_real_bd` | BD + MQTT + M + WS | Relevo MT | Body `dict` sin esquema |
+| POST `/api/marcajes/iniciar-improductivo-bd` | **`iniciar_marcaje_real_bd` (productivo)** | BD + MQTT + M + WS | No | Nombre engañoso (`api/marcajes_api.py:127-149`) |
+| POST `/api/marcajes/iniciar-relevo-mt-real` | `::iniciar_relevo_mt_real_bd` | BD + MQTT + M + WS | Relevo MT | Body `dict` sin esquema. (2026-11-24) `relevo` lleva `wo_number`, `tk_id`, `estadoResolucion` y `tituloOt` (heredados, sin consultar Optimus); incoherentes → 409 `DATOS_RELEVO_INCOMPLETOS` |
 | GET `/api/marcajes/activos-bd` | `listar_marcajes_activos_bd` | L | No | |
 | POST `/api/marcajes/sincronizar-desde-bd` | `reemplazar_estado_marcajes` | **M (reemplazo total) + WS** | **Cada carga de página** y botón *Sincronizar BD* | Ante un error de lectura deja la memoria vacía (R-07) |
 | GET `/api/marcajes/activos-simulados` | memoria | L | Respaldo de la carga inicial | |
@@ -39,7 +40,7 @@ Leyenda de **Efecto**: L = solo lectura · M = escribe en la memoria del proceso
 ### Códigos HTTP [C]
 
 - Los bloqueos operativos devuelven **409** con `detail` = el dict de resultado completo.
-- `postJson` (`app.js:109-129`) extrae `detail.mensaje`.
+- `postJson` (`app.js:109-133`) extrae `detail.mensaje`. Desde la iteración 5 de `14-resolucion-ot.md` (2026-11-24), el `Error` lanzado lleva además `status` y `detail` (sin cambiar `message`).
 - Los errores no capturados (p. ej. una excepción de `dtbOptimus` en el cierre) devuelven **500**.
 
 ## 2. WebSockets (`main.py`)
@@ -49,7 +50,7 @@ Leyenda de **Efecto**: L = solo lectura · M = escribe en la memoria del proceso
 | `/ws/marcajes` (83-106) | `MARCAGES_ACTIVOS_ACTUALIZADOS` con la lista en memoria | `MARCAGES_ACTIVOS_ACTUALIZADOS` (`marcajes`, opcionalmente `marcaje`, `marcaje_cerrado`, `resultado_*`) | Endpoints de marcajes; `mqtt_service._broadcast_marcajes_desde_hilo` cuando un DATOS se asocia |
 | `/ws/mqtt` (109-131) | `MQTT_ESTADO` | `MQTT_ESTADO`, `MQTT_MENSAJE_RECIBIDO` (`mensaje`, `estado`, `asociacion`, `persistencia_simulada`) | `mqtt_service` |
 
-- [C] El tipo se escribe `MARCAGES` (con G). Es el contrato vigente con `app.js:1485`.
+- [C] El tipo se escribe `MARCAGES` (con G). Es el contrato vigente con `app.js:1591`.
 - [C] Los mensajes que envía el cliente se ignoran.
 - [C] El broadcast solo llega a los clientes conectados **a ese proceso**.
 - [C] Desde el hilo de paho se usa `asyncio.run_coroutine_threadsafe` con el loop capturado en `iniciar`.

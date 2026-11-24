@@ -1,6 +1,6 @@
 # SmartFactory Web v2 — guía para Claude Code
 
-Sistema web de **marcajes de producción en planta** (Mayaprin). Los operarios se identifican con su huella y abren y cierran marcajes (operario + OP + recurso + actividad). Los sensores ESP envían conteos por MQTT. Al cerrar, se calcula la producción (`cantidadreal`) en MySQL `smartfactory.resumenmarcajes`. Sustituye a la app PyQt de `../src`. Versión 20.24.0.
+Sistema web de **marcajes de producción en planta** (Mayaprin). Los operarios se identifican con su huella y abren y cierran marcajes (operario + OP + recurso + actividad). Los sensores ESP envían conteos por MQTT. Al cerrar, se calcula la producción (`cantidadreal`) en MySQL `smartfactory.resumenmarcajes`. Sustituye a la app PyQt de `../src`. Versión 20.25.0.
 
 **Stack**:
 - Backend: Python 3.10 · FastAPI · uvicorn · paho-mqtt · mysql-connector.
@@ -60,6 +60,7 @@ Matriz completa de lo que puedes hacer solo y lo que requiere autorización: `do
 | `11-pruebas` | Pruebas y fixtures |
 | `12-procedimiento-desarrollo` | **Procedimiento y estrategia** |
 | `13-entorno-desarrollo-bd` | Aislamiento de MySQL: propuesta |
+| `14-resolucion-ot` | Resolución de OT y tarea (PRODIGOS): diseño |
 
 Etiquetas: **[C]** confirmado · **[I]** inferido · **[?]** no verificable. No conviertas hipótesis en hechos ni recomendaciones en reglas de negocio.
 
@@ -68,6 +69,7 @@ Etiquetas: **[C]** confirmado · **[I]** inferido · **[?]** no verificable. No 
 - La **apertura** hace INSERT y **después** publica MQTT. Los cierres **FINAL/MD** publican **antes** de tocar la BD. **MT** no publica.
 - El cierre **no es transaccional**. Solo comprueba el INSERT del operario: si falla, aborta sin DELETE (v20.24); el resto no se comprueba (R-01). `publicar` puede devolver éxito con el broker caído (R-04).
 - `totalUsuario` (pliegos buenos declarados), `pliegosIncorrectos` (v20.24) y `cantidadreal` (sensor) son **independientes**: ninguno se resta de otro.
+- La OT y la tarea se fijan al abrir (`marcajeactivo`) y el cierre las copia; no se recalculan (v20.25).
 - Improductivo = OP centinela `12345`. `cantidadreal = última cantpliegos − SUM(MT de numOp+actividad)`, sin acotar (R-02).
 - No hay autenticación en el servidor; los roles ADMIN/SU solo existen en CSS (R-05).
 - Las pruebas marcadas `caracterizacion` fijan el comportamiento **actual**, defectos incluidos. No cambies su expectativa sin una decisión aprobada.

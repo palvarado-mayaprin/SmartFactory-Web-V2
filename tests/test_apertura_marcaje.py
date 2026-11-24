@@ -13,6 +13,16 @@ IMPRODUCTIVO = {
 URL = "/api/marcajes/iniciar-real-bd"
 
 
+@pytest.fixture(autouse=True)
+def op_elegible_con_una_ot(bd):
+    """2026-11-24 (14-resolucion-ot.md, iteración 4): la apertura resuelve la OT en Optimus
+    antes de cualquier efecto. OP 51151 elegible con una OT que tiene la tarea → AUTOMATICA."""
+    bd.responder(r"FROM job200", [(51151, "N", "N", "0", "CAJA", 1000)], origen="optimus1")
+    bd.responder(r"FROM wo WHERE", [(5115101, "N", 1, "CAJA")], origen="optimus1")
+    bd.responder(r"FROM wo_task200 WHERE", [(7, 5115101, "N", 1)], origen="optimus1")
+    return bd
+
+
 @pytest.fixture
 def maquina_libre(bd):
     bd.responder(r"FROM smartfactory.macdirectorio", [(MAC,)])

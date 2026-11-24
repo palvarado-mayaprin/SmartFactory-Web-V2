@@ -16,6 +16,9 @@ def preparar(bd, cantpliegos=500, suma_mt=None):
     bd.responder(r"COALESCE", [(cantpliegos, "2026-10-12 08:00:00", "2026-10-12 09:00:00", 60)])
     bd.responder(r"SUM\(cantidadreal\), MIN\(tiempoinicio\)", [(cantpliegos, "2026-10-12 08:00:00", "2026-10-12 09:00:00", 60)])
     bd.responder(r"FROM wo_task200", [(5115101, 7)], origen="optimus")
+    # 2026-11-24 (14-resolucion-ot.md, iteración 4): fila abierta antes de fijar la OT
+    # (estadoResolucion NULL) → el cierre usa el respaldo _obtener_wo_tk, como hasta ahora.
+    bd.responder(r"SELECT wo_number, tk_id, estadoResolucion", [(None, None, None, None)])
     bd.responder(r"FROM smartfactory.marcajeactivo", FILA_ACTIVA)
     return bd
 

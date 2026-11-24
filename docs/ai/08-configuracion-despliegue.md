@@ -50,7 +50,7 @@
 - **[C]** Cada PC con lector ejecuta el servicio de huella local (README_V20, README_V20_12).
 - **[I]** Cada PC también ejecuta su propio backend, por el CORS de la huella y el host 127.0.0.1. README_V20 contempla un "servidor central" que la configuración actual no permite sin cambios. **Pendiente de confirmar** (P-02).
 - **[?]** Número de PCs, si la app PyQt sigue en uso en paralelo, y cómo se actualiza el código en cada PC.
-- **Versión**: `main.py:25` y `/api/health` indican `20.24.0`. Cada versión documenta sus cambios en `readme/README_V*.md`.
+- **Versión**: `main.py:25` y `/api/health` indican `20.25.0`. Cada versión documenta sus cambios en `readme/README_V*.md`.
 
 ## 6. Logs (`logs/`, ignorado por git) [C]
 

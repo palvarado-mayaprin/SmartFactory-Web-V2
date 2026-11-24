@@ -31,7 +31,7 @@ SmartFactory Web v2 es la versión web de la app de escritorio PyQt (`../src`) p
 
 | Ruta | Rol |
 |---|---|
-| `main.py` | App FastAPI v20.24.0: monta `static/`, plantillas, 5 routers, `/`, `/api/health`, WS `/ws/marcajes` (83-106) y `/ws/mqtt` (109-131). Arranca y detiene MQTT en los eventos `startup`/`shutdown` (37-66). Añade `../src` a `sys.path` (11-13) |
+| `main.py` | App FastAPI v20.25.0: monta `static/`, plantillas, 5 routers, `/`, `/api/health`, WS `/ws/marcajes` (83-106) y `/ws/mqtt` (109-131). Arranca y detiene MQTT en los eventos `startup`/`shutdown` (37-66). Añade `../src` a `sys.path` (11-13) |
 | `config.py` | Carga `.env` desde el directorio actual, el del proyecto y el padre, sin sobrescribir variables existentes (14-41). Define 3 flags con valor por defecto **"1"** (50-52) |
 | `db/conexion.py` | Clases `dtbSmartFactory` (9-50), `dtbOptimus` (53-73), `dtbOptimus1` (76-109) y `dtbEntregasDiarias` (112-140). **Contiene credenciales en claro** |
 | `api/usuarios_api.py` | `/api/usuario/identificar-prueba` |
@@ -93,12 +93,12 @@ main ─┬─ api.usuarios ── services.usuarios ─┬─ db.conexion (Opti
 huella_local.main: independiente (no importa nada del backend)
 ```
 
-\* `dtbEntregasDiarias` se importa, pero su consulta está comentada (`services/ordenes_service.py:36-55`).
+\* `dtbEntregasDiarias` se importa, pero su consulta está comentada (`services/ordenes_service.py:33-52`).
 
 **Puntos de alto acoplamiento**:
 
 - `limpiar_sql` (`services/marcajes_service.py:8-19`) se usa en persistencia y cierres.
-- `simular_inicio_marcaje*` (`services/marcajes_service.py:319-402`) **forma parte del camino real** de la apertura.
+- `simular_inicio_marcaje*` (`services/marcajes_service.py:352-435`) **forma parte del camino real** de la apertura.
 - `mqtt_monitor` es un singleton compartido por la apertura, el cierre y `main`.
 
 ## 5. Estado del sistema: tres fuentes de verdad
@@ -111,17 +111,18 @@ huella_local.main: independiente (no importa nada del backend)
 
 Reglas de sincronización entre estas fuentes: `04-flujos-marcajes.md` §9.
 
-Identificador en memoria [C]: `"{modo}|{username}|{numOp}|{recurso}|{actividad}"` con `modo=REAL_BD` (`services/persistencia_marcajes_service.py:48`, `services/usuarios_service.py:14`). Reabrir la misma combinación produce el mismo id.
+Identificador en memoria [C]: `"{modo}|{username}|{numOp}|{recurso}|{actividad}"` con `modo=REAL_BD` (`services/persistencia_marcajes_service.py:53`, `services/usuarios_service.py:14`). Reabrir la misma combinación produce el mismo id.
 
 ## 6. Frontend [C]
 
-- **Carga inicial** (`app.js:1687-1692`, `1869-1870`):
+- **Carga inicial** (`app.js:1793-1798`, `1869-1870`):
   - `revisarBackend`, `revisarServicioHuellaLocal`, `consultarModoPersistencia`.
   - `cargarMarcajesActivosIniciales` (**POST `sincronizar-desde-bd`**, que reemplaza la memoria del backend).
   - `conectarWebSocketMarcajes`, `aplicarVisibilidadPorRol`, `cargarEstadoMqtt`, `conectarWebSocketMqtt`.
 - **Pasos de la UI**: 1 usuario → 2 OP → 3 actividad (`activarPaso`, `app.js:22-30`). Paneles: cierre, relevo MT, improductivo.
-- **Roles** ADMIN/SU: **solo visibilidad CSS** (`.admin-only`, `.su-admin-only`; `app.js:1972-1987`). El backend no aplica ningún permiso.
-- **Riesgo de XSS**: hay muchos `innerHTML` con datos de BD o MQTT sin escapar (p. ej. `app.js:1254`, `1533-1557`, `1825-1831`) [C]. Impacto [?] (los datos vienen de sistemas internos).
+- **Roles** ADMIN/SU: **solo visibilidad CSS** (`.admin-only`, `.su-admin-only`; `app.js:2078-2093`). El backend no aplica ningún permiso.
+- **Riesgo de XSS**: hay muchos `innerHTML` con datos de BD o MQTT sin escapar (p. ej. `app.js:1343`, `1533-1557`, `1825-1831`) [C]. Impacto [?] (los datos vienen de sistemas internos).
+- **`static/js/resolucion_ot.js`** (2026-11-24, iteración 5 de `14-resolucion-ot.md`): lógica pura de la elección de OT (`etiquetaOt`, `construirOpcionesOt`), sin efectos al cargar. Se carga después de `cierre_validacion.js` (usa su `escaparHtml`) y antes de `app.js` (`templates/index.html:211-213`). Probada con `node --test`.
 - **Dependencia externa**: SweetAlert2 desde `cdn.jsdelivr.net` sin versión exacta (`templates/index.html:210`). Sin internet, los diálogos fallan [I].
 - **Funciones heredadas sin efecto** (se conservan por compatibilidad): `renderSimulacionCierre`, `renderSimulacionMarcaje`, `activarMarcajeSimulado`, `iniciarMarcajeRealBd`, `cerrarMarcajeSimulado`.
 - `cerrarMarcajeRealBdDesdeTexto`/`cerrarMarcajeRealBd` siguen definidas y llaman al endpoint heredado `cerrar-real-bd`. **[C] No hay ningún botón que las invoque.**

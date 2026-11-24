@@ -5,6 +5,11 @@ from typing import Any
 from config import ENABLE_REAL_DB_WRITES, ENABLE_REAL_MQTT_PUBLISH
 from db.conexion import dtbSmartFactory
 from services.marcajes_service import limpiar_sql, simular_inicio_marcaje, simular_inicio_marcaje_improductivo
+from services.resolucion_ot_service import OP_IMPRODUCTIVO, resolver_desde_optimus
+
+# Resolución de OT fijada al abrir (docs/ai/14-resolucion-ot.md §2.4).
+CAMPOS_RESOLUCION = ("wo_number", "tk_id", "estadoResolucion", "tituloOt")
+ESTADOS_CON_TAREA = ("AUTOMATICA", "ELEGIDA")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 LOG_DIR = BASE_DIR / "logs"
@@ -187,7 +192,23 @@ def validar_apertura_marcaje_real(valores: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def iniciar_marcaje_real_bd(payload: dict[str, Any]) -> dict[str, Any]:
+def _resolucion_desde_resultado(resultado: dict[str, Any]) -> dict[str, Any]:
+    """Convierte un resultado correcto de resolver_desde_optimus en los campos de marcajeactivo."""
+    return {
+        "wo_number": resultado.get("wo_number"),
+        "tk_id": resultado.get("tk_id"),
+        "estadoResolucion": resultado.get("estado"),
+        "tituloOt": resultado.get("titulo_ot"),
+        "ots_candidatas": len(resultado.get("ots_candidatas") or []),
+        "ot_elegida": bool(resultado.get("ot_elegida")),
+    }
+
+
+def _con_resolucion(payload: dict[str, Any], resolucion: dict[str, Any]) -> dict[str, Any]:
+    return {**payload, **{campo: resolucion.get(campo) for campo in CAMPOS_RESOLUCION}}
+
+
+def iniciar_marcaje_real_bd(payload: dict[str, Any], resolucion: dict[str, Any] | None = None) -> dict[str, Any]:
     """
     Ejecuta la apertura real del marcaje en smartfactory.marcajeactivo.
 
@@ -196,7 +217,43 @@ def iniciar_marcaje_real_bd(payload: dict[str, Any]) -> dict[str, Any]:
     - validación de duplicados por recurso/topic,
     - logs locales,
     - respuesta clara en modo protegido.
+
+    2026-11-24 (docs/ai/14-resolucion-ot.md): la OT y la tarea se resuelven en el servidor
+    ANTES de cualquier consulta a SmartFactory, INSERT o MQTT. `resolucion` solo lo pasa el
+    relevo MT (hereda OT y tarea sin consultar Optimus).
     """
+    if resolucion is None:
+        if not str(payload.get("actividad") or "").strip():
+            return {
+                "ok": False,
+                "modo": "VALIDACION_BLOQUEADA",
+                "mensaje": "No se puede abrir marcaje real. Faltan campos críticos: actividad",
+            }
+
+        resultado_ot = resolver_desde_optimus(payload.get("num_op"), payload.get("actividad"), payload.get("numero_ot"))
+        if not resultado_ot.get("ok"):
+            _log_accion("APERTURA_BLOQUEADA", {
+                "motivo": resultado_ot.get("mensaje"),
+                "codigo": resultado_ot.get("codigo"),
+                "username": payload.get("codigo_usuario"),
+                "numOp": payload.get("num_op"),
+                "recurso": payload.get("recurso"),
+                "actividad": payload.get("actividad"),
+                "numero_ot": payload.get("numero_ot"),
+            })
+            rechazo = {
+                "ok": False,
+                "modo": "RESOLUCION_OT",
+                "codigo": resultado_ot.get("codigo"),
+                "mensaje": resultado_ot.get("mensaje"),
+            }
+            if "ots_candidatas" in resultado_ot:
+                rechazo["ots_candidatas"] = resultado_ot["ots_candidatas"]
+            return rechazo
+
+        resolucion = _resolucion_desde_resultado(resultado_ot)
+
+    payload = _con_resolucion(payload, resolucion)
     simulacion = simular_inicio_marcaje(payload)
 
     if not simulacion.get("ok"):
@@ -302,6 +359,11 @@ def iniciar_marcaje_real_bd(payload: dict[str, Any]) -> dict[str, Any]:
         "topic": valores.get("topic"),
         "mqtt_publish_enabled": ENABLE_REAL_MQTT_PUBLISH,
         "mqtt_publish_ok": resultado_mqtt.get("ok"),
+        "estadoResolucion": resolucion.get("estadoResolucion"),
+        "wo_number": resolucion.get("wo_number"),
+        "tk_id": resolucion.get("tk_id"),
+        "ots_candidatas": resolucion.get("ots_candidatas"),
+        "ot_elegida": {True: "si", False: "no"}.get(resolucion.get("ot_elegida"), "heredada"),
     })
 
     if resultado_mqtt.get("ok"):
@@ -322,10 +384,11 @@ def iniciar_marcaje_real_bd(payload: dict[str, Any]) -> dict[str, Any]:
             "payload": mqtt_payload,
             "publicacion_habilitada": ENABLE_REAL_MQTT_PUBLISH,
         },
+        "resolucion": resolucion,
     }
-    
-    
-    
+
+
+
 def iniciar_marcaje_improductivo_bd(payload: dict[str, Any]) -> dict[str, Any]:
     """
     Ejecuta la apertura real del marcaje en smartfactory.marcajeactivo.
@@ -335,7 +398,18 @@ def iniciar_marcaje_improductivo_bd(payload: dict[str, Any]) -> dict[str, Any]:
     - validación de duplicados por recurso/topic,
     - logs locales,
     - respuesta clara en modo protegido.
+
+    2026-11-24: el improductivo se guarda con estadoResolucion = 'SIN_TAREA'
+    (resolver_desde_optimus con la OP 12345 no consulta Optimus).
     """
+    if not str(payload.get("actividad") or "").strip():
+        return {
+            "ok": False,
+            "modo": "VALIDACION_BLOQUEADA",
+            "mensaje": "No se puede abrir marcaje real. Faltan campos críticos: actividad",
+        }
+    resolucion = _resolucion_desde_resultado(resolver_desde_optimus(OP_IMPRODUCTIVO, payload.get("actividad")))
+    payload = _con_resolucion(payload, resolucion)
     simulacion = simular_inicio_marcaje_improductivo(payload)
 
     if not simulacion.get("ok"):
@@ -549,6 +623,44 @@ def cerrar_marcaje_real_bd(marcaje: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _entero_positivo(valor: Any) -> int | None:
+    if isinstance(valor, bool) or valor is None:
+        return None
+    texto = str(valor).strip()
+    return int(texto) if texto.isascii() and texto.isdigit() and int(texto) > 0 else None
+
+
+def _vacio_o_cero(valor: Any) -> bool:
+    # El cierre envía 0/0 para SIN_TAREA (lo que va a resumenmarcajes, P-19): cuenta como vacío
+    # (decisión del usuario, 2026-11-24).
+    return valor is None or (not isinstance(valor, bool) and str(valor).strip() in ("", "0"))
+
+
+def _validar_resolucion_relevo(relevo: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    """Valida la forma de la OT heredada. Devuelve (resolución, None) o (None, error)."""
+    estado = relevo.get("estadoResolucion")
+    estado = "" if estado is None else str(estado).strip()
+    wo_number, tk_id = relevo.get("wo_number"), relevo.get("tk_id")
+    titulo = str(relevo.get("tituloOt") or "").strip()[:60] or None
+
+    if not estado:
+        # Marcaje abierto antes de fijar la OT al abrir: se hereda sin OT (todo NULL).
+        return {campo: None for campo in CAMPOS_RESOLUCION}, None
+
+    if estado in ESTADOS_CON_TAREA:
+        wo_entero, tk_entero = _entero_positivo(wo_number), _entero_positivo(tk_id)
+        if wo_entero is None or tk_entero is None:
+            return None, f"La OT heredada ({estado}) exige wo_number y tk_id enteros."
+        return {"wo_number": wo_entero, "tk_id": tk_entero, "estadoResolucion": estado, "tituloOt": titulo}, None
+
+    if estado == "SIN_TAREA":
+        if not (_vacio_o_cero(wo_number) and _vacio_o_cero(tk_id)):
+            return None, "La OT heredada (SIN_TAREA) no puede traer wo_number ni tk_id."
+        return {"wo_number": None, "tk_id": None, "estadoResolucion": estado, "tituloOt": None}, None
+
+    return None, f"estadoResolucion heredado desconocido: {estado}."
+
+
 def iniciar_relevo_mt_real_bd(payload: dict[str, Any]) -> dict[str, Any]:
     """
     Abre un nuevo marcaje real reutilizando OP/recurso/actividad del marcaje cerrado con MT.
@@ -599,9 +711,19 @@ def iniciar_relevo_mt_real_bd(payload: dict[str, Any]) -> dict[str, Any]:
             "relevo_recibido": relevo,
         }
 
+    # El relevo hereda OT y tarea del marcaje cerrado sin consultar Optimus: un cambio de
+    # turno con la máquina en marcha no debe bloquearse por Optimus (14-resolucion-ot.md §2.3).
+    resolucion, error_resolucion = _validar_resolucion_relevo(relevo)
+    if error_resolucion:
+        return {
+            "ok": False,
+            "modo": "DATOS_RELEVO_INCOMPLETOS",
+            "mensaje": "No se puede iniciar relevo MT. " + error_resolucion,
+            "relevo_recibido": relevo,
+        }
+
     payload_inicio = {
         "num_op": str(num_op),
-        "num_ot": str(relevo.get("num_ot") or f"{num_op}01"),
         "descripcion": str(descripcion),
         "cantidad": str(cantidad),
         "recurso": str(recurso),
@@ -610,7 +732,7 @@ def iniciar_relevo_mt_real_bd(payload: dict[str, Any]) -> dict[str, Any]:
         "codigo_usuario": codigo_usuario,
     }
 
-    resultado = iniciar_marcaje_real_bd(payload_inicio)
+    resultado = iniciar_marcaje_real_bd(payload_inicio, resolucion=resolucion)
 
     if not resultado.get("ok"):
         resultado["modo_relevo"] = "MT"

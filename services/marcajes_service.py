@@ -151,10 +151,28 @@ def construir_mensaje_mqtt_inicio(payload: Dict[str, Any]) -> str:
     )
 
 
+ESTADOS_RESOLUCION = ("AUTOMATICA", "ELEGIDA", "SIN_TAREA")
+
+
+def _sql_entero_o_null(valor: Any, campo: str) -> str:
+    """Entero sin comillas o NULL. Un valor no entero es un error de programación (fail-fast)."""
+    if valor is None:
+        return "NULL"
+    if isinstance(valor, bool):
+        raise ValueError(f"{campo} debe ser entero, no booleano.")
+    try:
+        return str(int(str(valor).strip()))
+    except ValueError:
+        raise ValueError(f"{campo} debe ser entero: {valor!r}") from None
+
+
 def construir_insert_marcajeactivo(payload: Dict[str, Any], topic: str, produccion_unidad: str) -> str:
     """
     Construye el texto SQL que se insertaría en smartfactory.marcajeactivo.
     NO ejecuta el INSERT.
+
+    OT y tarea fijadas al abrir (docs/ai/14-resolucion-ot.md §2.4): si el payload no trae
+    los campos de resolución (rutas heredadas), se escriben como NULL.
     """
     num_op = limpiar_sql(payload["num_op"])
     descripcion = limpiar_sql(payload["descripcion"])
@@ -165,8 +183,18 @@ def construir_insert_marcajeactivo(payload: Dict[str, Any], topic: str, producci
     topic_limpio = limpiar_sql(topic)
     produccion_unidad_limpio = limpiar_sql(produccion_unidad)
 
+    wo_number = _sql_entero_o_null(payload.get("wo_number"), "wo_number")
+    tk_id = _sql_entero_o_null(payload.get("tk_id"), "tk_id")
+    estado = payload.get("estadoResolucion")
+    if estado is not None and estado not in ESTADOS_RESOLUCION:
+        raise ValueError(f"estadoResolucion inválido: {estado!r}")
+    estado_sql = "NULL" if estado is None else f"'{estado}'"
+    titulo = payload.get("tituloOt")
+    titulo_sql = "NULL" if titulo is None else f"'{limpiar_sql(titulo)}'"
+
     return f"""INSERT INTO smartfactory.marcajeactivo
-    (numOp, descrip, cantidad, recurso, actividad, username, topic, produccionUnidad)
+    (numOp, descrip, cantidad, recurso, actividad, username, topic, produccionUnidad,
+     wo_number, tk_id, estadoResolucion, tituloOt)
 VALUES
     ('{num_op}',
      '{descripcion}',
@@ -175,7 +203,11 @@ VALUES
      '{actividad}',
      '{codigo_usuario}',
      '{topic_limpio}',
-     '{produccion_unidad_limpio}');"""
+     '{produccion_unidad_limpio}',
+     {wo_number},
+     {tk_id},
+     {estado_sql},
+     {titulo_sql});"""
 
 
 def preparar_inicio_marcaje(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -233,7 +265,8 @@ def preparar_inicio_marcaje(payload: Dict[str, Any]) -> Dict[str, Any]:
         "mensaje": "Marcaje preparado correctamente. Aún no se insertó en BD ni se publicó MQTT.",
         "preview": {
             "num_op": payload["num_op"],
-            "num_ot": payload["num_ot"],
+            # OT resuelta en el servidor (None si aún no se resolvió o SIN_TAREA).
+            "wo_number": payload.get("wo_number"),
             "descripcion": payload["descripcion"],
             "cantidad": payload["cantidad"],
             "recurso": recurso,

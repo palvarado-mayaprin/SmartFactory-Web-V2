@@ -40,14 +40,14 @@
   - `SELECT * FROM smartfactory.superusuarios WHERE username='…' AND password='…'`: **contraseña en claro**, SQL concatenado.
   - Tipo de usuario leído de `fila[8]`, es decir, **por posición**.
 - Permisos que devuelve: `SU` → marcajes; `ADMIN` → marcajes, MQTT y admin.
-- **Solo se aplican en el navegador** (`aplicarVisibilidadPorRol`, `app.js:1972-1987`). Recargar la página pierde el modo elevado.
+- **Solo se aplican en el navegador** (`aplicarVisibilidadPorRol`, `app.js:2078-2093`). Recargar la página pierde el modo elevado.
 - Capacidades en la UI:
   - **SU/ADMIN**: "Cierre SU/ADMIN" de cualquier marcaje sin huella.
   - **ADMIN**: identificación manual, panel MQTT (conectar/detener), log de eventos, "Identificar otro usuario".
 
 ## 4. Esperado, problemas y pendientes
 
-- **Esperado** (texto de la UI): "Solo el dueño del marcaje podrá cerrarlo con huella" (`app.js:1548`). Se cumple en la UI; **no en la API** [C].
+- **Esperado** (texto de la UI): "Solo el dueño del marcaje podrá cerrarlo con huella" (`app.js:1654`). Se cumple en la UI; **no en la API** [C].
 - **Problemas**: R-05 (sin autenticación ni autorización en el servidor), R-14 (credenciales), R-15 (SQL concatenado en el login), R-21 (no se registra quién cerró).
 - **Recomendaciones (no aprobadas)**:
   - Firmar la identificación en el servicio de huella.

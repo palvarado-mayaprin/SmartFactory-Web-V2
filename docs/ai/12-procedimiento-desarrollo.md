@@ -88,7 +88,7 @@ Evita refactorizaciones generales que el requisito no necesite.
 - `static/js/app.js` es un script global sin módulos.
   - Para cambios pequeños, añade funciones siguiendo el estilo existente.
   - Para una pantalla nueva y grande, crea `static/js/<funcionalidad>.js` y cárgalo en `templates/index.html` **después** de `app.js`. Reutiliza `postJson`, `log`, `activarPaso`, `Swal` y los globales de estado.
-- Expón en `window` las funciones que se llamen desde `onclick` (patrón `app.js:1879-2043`).
+- Expón en `window` las funciones que se llamen desde `onclick` (patrón `app.js:1985-2149`).
 - Paneles con la clase `card`/`hidden`. Para la visibilidad por rol, usa `admin-only` / `su-admin-only` + `permission-hidden`.
   - **Esto solo oculta**: cualquier permiso real debe validarse en el backend.
 - **En código nuevo, escapa los datos** antes de interpolarlos en `innerHTML` (o usa `textContent`) (R-27).

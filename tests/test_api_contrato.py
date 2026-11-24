@@ -47,10 +47,20 @@ def test_identificar_con_marcaje_activo_pasa_a_cerrar(cliente, bd):
     assert datos["marcaje_activo"]["mac"] == "AABBCCDDEEFF"
 
 
-@pytest.mark.parametrize("op", ["123", "abc", "2000000"])
-def test_buscar_op_fuera_de_rango_400(cliente, op):
-    r = cliente.post("/api/op/buscar", json={"num_op": op, "codigo_usuario": "M1"})
+def test_buscar_op_no_numerica_400(cliente):
+    r = cliente.post("/api/op/buscar", json={"num_op": "abc", "codigo_usuario": "M1"})
     assert r.status_code == 400
+
+
+@pytest.mark.parametrize("op", ["123", "2000000"])
+def test_buscar_op_sin_rango_p20(cliente, bd, op):
+    """P-20 (decisión del 2026-11-24): se elimina el rango 10 000-1 000 000; basta con
+    que la OP sea numérica, exista en job200 y sea elegible."""
+    bd.responder(STAF, [("M1", "OPERARIO UNO", "PEG CAJ2")], origen="optimus1")
+    bd.responder(r"FROM job200", [(int(op), "N", "N", "0", "CAJA", 1000)], origen="optimus1")
+    r = cliente.post("/api/op/buscar", json={"num_op": op, "codigo_usuario": "M1"})
+    assert r.status_code == 200
+    assert r.json()["orden"]["num_op"] == op
 
 
 def test_cierre_tipo_invalido_409_con_detalle_dict(cliente):

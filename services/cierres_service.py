@@ -307,6 +307,47 @@ def _obtener_wo_tk(num_op: str, recurso: str, actividad: str) -> tuple[Any, Any,
     return 0, 0, query_recurso
 
 
+def _obtener_ot_fijada(num_op: str, recurso: str, actividad: str, username: str, topic: str) -> dict[str, Any]:
+    """
+    OT y tarea fijadas al abrir (docs/ai/14-resolucion-ot.md §2.4). Mismas condiciones que la
+    validación de existencia de ejecutar_cierre_marcaje_real.
+
+    - None (error de BD) → ok False: el cierre se rechaza antes de publicar o escribir.
+    - AUTOMATICA / ELEGIDA → wo_number y tk_id de marcajeactivo.
+    - SIN_TAREA → 0, 0 (P-19).
+    - estadoResolucion nulo (marcaje abierto antes del cambio), desconocido o sin fila →
+      respaldo _obtener_wo_tk, comportamiento anterior (P-19).
+    """
+    query = f"""
+        SELECT wo_number, tk_id, estadoResolucion, tituloOt
+        FROM smartfactory.marcajeactivo
+        WHERE numOp = '{limpiar_sql(num_op)}'
+          AND recurso = '{limpiar_sql(recurso)}'
+          AND actividad = '{limpiar_sql(actividad)}'
+          AND username = '{limpiar_sql(username)}'
+          AND topic = '{limpiar_sql(topic)}'
+        LIMIT 1
+    """
+    filas = dtbSmartFactory(query).consultaSmartFactory()
+    if filas is None:
+        return {"ok": False}
+
+    wo_number, tk_id, estado, titulo = filas[0][:4] if filas else (None, None, None, None)
+    estado = str(estado).strip() if estado is not None else None
+
+    if estado in ("AUTOMATICA", "ELEGIDA"):
+        return {"ok": True, "wo_number": wo_number, "tk_id": tk_id,
+                "estadoResolucion": estado, "tituloOt": titulo, "query": query}
+    if estado == "SIN_TAREA":
+        return {"ok": True, "wo_number": 0, "tk_id": 0,
+                "estadoResolucion": estado, "tituloOt": titulo, "query": query}
+
+    # Respaldo (P-19): marcaje sin OT fijada → se recalcula como antes de 2026-11-24.
+    wo_number, tk_id, query_wo_tk = _obtener_wo_tk(num_op, recurso, actividad)
+    return {"ok": True, "wo_number": wo_number, "tk_id": tk_id,
+            "estadoResolucion": None, "tituloOt": titulo, "query": query_wo_tk}
+
+
 def _construir_query_suma_mt_anterior(num_op: str, actividad: str) -> str:
     return f"""
         SELECT SUM(cantidadreal)
@@ -510,7 +551,18 @@ def simular_cierre_marcaje(
     tmp_begin = datos_cierre["tiempo_inicio"]
     tmp_fin = datos_cierre["tiempo_final"]
     duracion = datos_cierre["duracion"]
-    wo_number, tk_id, query_wo_tk = _obtener_wo_tk(num_op, recurso, actividad)
+
+    ot_fijada = _obtener_ot_fijada(num_op, recurso, actividad, username, topic)
+    if not ot_fijada["ok"]:
+        return {
+            "ok": False,
+            "modo": "ERROR_BD_OT",
+            "mensaje": (
+                "No se pudo leer la OT del marcaje activo en BD. No se publicó MQTT ni se modificó la BD; "
+                "intente cerrar de nuevo."
+            ),
+        }
+    wo_number, tk_id, query_wo_tk = ot_fijada["wo_number"], ot_fijada["tk_id"], ot_fijada["query"]
 
     # Diagnóstico v20.20: solo se ejecutan consultas adicionales cuando la cantidadreal es negativa.
     # El log es informativo y nunca altera, bloquea ni corrige el cierre.
@@ -656,6 +708,8 @@ VALUES
                 "pliegosIncorrectos": pliegos_incorrectos_valor,
                 "wo_number": wo_number,
                 "tk_id": tk_id,
+                "estadoResolucion": ot_fijada["estadoResolucion"],
+                "tituloOt": ot_fijada["tituloOt"],
                 "topic": topic,
                 "mac": mac,
                 "pausa_improductiva": pausa_improductiva,
@@ -873,7 +927,11 @@ def ejecutar_cierre_marcaje_real(
         if tipo_cierre == "MT":
             relevo_pendiente = {
                 "numOp": valores.get("numOp"),
-                "num_ot": f"{valores.get('numOp')}01",
+                # OT heredada por el relevo (14-resolucion-ot.md §2.3). Con SIN_TAREA llegan 0/0.
+                "wo_number": valores.get("wo_number"),
+                "tk_id": valores.get("tk_id"),
+                "estadoResolucion": valores.get("estadoResolucion"),
+                "tituloOt": valores.get("tituloOt"),
                 "descrip": marcaje.get("descrip") or marcaje.get("descripcion") or "RELEVO MT",
                 "cantidad": valores.get("cantidadcot"),
                 "cantidadcot": valores.get("cantidadcot"),

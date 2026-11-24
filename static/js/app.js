@@ -122,10 +122,89 @@ async function postJson(url, data) {
         if (typeof mensaje === "object") {
             mensaje = mensaje.mensaje || JSON.stringify(mensaje, null, 2);
         }
-        throw new Error(mensaje);
+        const error = new Error(mensaje);
+        // Se conserva el detalle para quien necesite el código (p. ej. el rechazo de OT).
+        error.status = respuesta.status;
+        error.detail = contenido.detail;
+        throw error;
     }
 
     return contenido;
+}
+
+// =====================================================
+// Elección de OT al iniciar (docs/ai/14-resolucion-ot.md, iteración 5)
+// =====================================================
+const CODIGOS_RECHAZO_OT = ["SELECCION_OT_REQUERIDA", "OT_NO_CANDIDATA"];
+const AVISO_OT_CAMBIARON = "Las partes de la orden cambiaron; vuelva a elegir";
+
+function esRechazoOt(error) {
+    return error?.status === 409 && CODIGOS_RECHAZO_OT.includes(error?.detail?.codigo);
+}
+
+/**
+ * Pregunta en qué OT trabaja el operario cuando la actividad está en 2 o más.
+ * @returns {{numeroOt: number|null, titulo: string|null} | null} null si el operario vuelve atrás.
+ * Los errores de la consulta se propagan al llamador.
+ */
+async function elegirOtParaInicio(numOp, actividadCodigo, aviso = null) {
+    const datos = await postJson("/api/op/ots", { num_op: numOp, actividad: actividadCodigo });
+
+    if (!datos.requiereEleccion) {
+        return { numeroOt: null, titulo: null };
+    }
+
+    const ots = Array.isArray(datos.ots) ? datos.ots : [];
+    const eleccion = await Swal.fire({
+        icon: "question",
+        title: "¿En qué parte de la orden trabaja?",
+        html: aviso ? `<p><strong>${escaparHtml(aviso)}</strong></p>` : undefined,
+        input: "radio",
+        inputOptions: construirOpcionesOt(ots),
+        inputValidator: (valor) => (valor ? undefined : "Elija una parte de la orden."),
+        showCancelButton: true,
+        confirmButtonText: "Continuar",
+        cancelButtonText: "Volver",
+        reverseButtons: true
+    });
+
+    if (!eleccion.isConfirmed) {
+        return null;
+    }
+
+    const ot = ots.find((item) => String(item.numeroOt) === String(eleccion.value));
+    return { numeroOt: Number(eleccion.value), titulo: ot?.titulo || null };
+}
+
+/**
+ * POST iniciar-real-bd con numero_ot solo si hay elección. Ante un rechazo de OT
+ * (409 SELECCION_OT_REQUERIDA / OT_NO_CANDIDATA) vuelve a pedir la OT con un aviso y
+ * reintenta UNA sola vez; si vuelve a fallar, el error se propaga.
+ * @returns {object|null} respuesta del servidor, o null si el operario vuelve atrás en la nueva elección.
+ */
+async function iniciarMarcajeRealConOt(cuerpo, numeroOt) {
+    const enviar = (numero) => postJson(
+        "/api/marcajes/iniciar-real-bd",
+        numero ? { ...cuerpo, numero_ot: numero } : cuerpo
+    );
+
+    try {
+        return await enviar(numeroOt);
+    } catch (error) {
+        if (!esRechazoOt(error)) {
+            throw error;
+        }
+        log(`${error.message} Se vuelve a pedir la parte de la orden.`, true);
+        const eleccion = await elegirOtParaInicio(cuerpo.num_op, cuerpo.actividad, AVISO_OT_CAMBIARON);
+        if (!eleccion) {
+            return null;
+        }
+        return await enviar(eleccion.numeroOt);
+    }
+}
+
+function filaParte(numeroOt, titulo) {
+    return `<strong>Parte:</strong> ${etiquetaOt({ numeroOt, titulo })}<br>`;
 }
 
 async function identificarUsuario() {
@@ -349,7 +428,6 @@ async function prepararTirajeMismaOrdenDespuesArreglo(contexto) {
 
         document.getElementById("infoOrden").innerHTML = `
             <strong>OP:</strong> ${ordenActual.num_op}<br>
-            <strong>OT:</strong> ${ordenActual.num_ot}<br>
             <strong>Descripción:</strong> ${ordenActual.descripcion}<br>
             <strong>Cantidad:</strong> ${ordenActual.cantidad}<br>
             <strong>Recurso sugerido:</strong> ${contexto.recurso}
@@ -362,7 +440,7 @@ async function prepararTirajeMismaOrdenDespuesArreglo(contexto) {
         activarPaso(3);
 
         const datosActividades = await postJson("/api/actividades/recurso", {
-            num_ot: ordenActual.num_ot,
+            num_op: ordenActual.num_op,
             recurso: contexto.recurso
         });
 
@@ -537,11 +615,15 @@ async function consultarContextoRetornoDespuesImproductivo(marcaje) {
             return null;
         }
 
+        // OT del marcaje anterior (iteración 5): se reutiliza solo si es un entero > 0.
+        const woNumber = Number(registro.wo_number);
+
         return {
             usuario: username,
             recurso: String(registro.recurso || recurso).trim(),
             actividad: String(registro.actividad || "").trim(),
-            numOp: String(registro.numOp || "").trim()
+            numOp: String(registro.numOp || "").trim(),
+            woNumber: Number.isInteger(woNumber) && woNumber > 0 ? woNumber : null
         };
     } catch (error) {
         // La consulta es auxiliar. Nunca debe impedir el cierre del improductivo.
@@ -599,7 +681,7 @@ async function reabrirActividadDespuesImproductivo(contexto) {
         }
 
         const datosCotizadas = await postJson("/api/actividades/recurso", {
-            num_ot: orden.num_ot,
+            num_op: orden.num_op,
             recurso: contexto.recurso
         });
 
@@ -608,7 +690,7 @@ async function reabrirActividadDespuesImproductivo(contexto) {
 
         if (!actividad) {
             const datosNoCotizadas = await postJson("/api/actividades/no-cotizadas", {
-                num_ot: orden.num_ot,
+                num_op: orden.num_op,
                 recurso: contexto.recurso
             });
             actividades = Array.isArray(datosNoCotizadas?.actividades) ? datosNoCotizadas.actividades : [];
@@ -621,16 +703,20 @@ async function reabrirActividadDespuesImproductivo(contexto) {
 
         log(`Reabriendo automáticamente OP ${orden.num_op}, actividad ${actividad.codigo}, recurso ${contexto.recurso}...`);
 
-        const datosInicio = await postJson("/api/marcajes/iniciar-real-bd", {
+        // Se reutiliza la OT anterior; si ya no es válida, el servidor responde 409 y se pide de nuevo.
+        const datosInicio = await iniciarMarcajeRealConOt({
             num_op: orden.num_op,
-            num_ot: orden.num_ot,
             descripcion: orden.descripcion,
             cantidad: orden.cantidad,
             recurso: contexto.recurso,
             actividad: actividad.codigo,
             actividad_nombre: actividad.nombre,
             codigo_usuario: contexto.usuario
-        });
+        }, contexto.woNumber);
+
+        if (!datosInicio) {
+            throw new Error("No se eligió la parte de la orden");
+        }
 
         renderMarcajesActivos(datosInicio.marcajes || []);
         log(datosInicio.mensaje || "Marcaje productivo reabierto correctamente.");
@@ -866,7 +952,11 @@ function construirRelevoPendienteDesdeCierre(datos) {
 
     return {
         numOp: valores.numOp || marcaje.numOp,
-        num_ot: `${valores.numOp || marcaje.numOp}01`,
+        // OT heredada del marcaje cerrado (el servidor valida su forma; sin consultar Optimus).
+        wo_number: valores.wo_number ?? null,
+        tk_id: valores.tk_id ?? null,
+        estadoResolucion: valores.estadoResolucion ?? null,
+        tituloOt: valores.tituloOt ?? null,
         descrip: marcaje.descrip || marcaje.descripcion || "RELEVO MT",
         cantidad: valores.cantidadcot || marcaje.cantidad || 0,
         cantidadcot: valores.cantidadcot || marcaje.cantidad || 0,
@@ -1169,7 +1259,6 @@ async function buscarOp() {
 
         document.getElementById("infoOrden").innerHTML = `
             <strong>OP:</strong> ${ordenActual.num_op}<br>
-            <strong>OT:</strong> ${ordenActual.num_ot}<br>
             <strong>Descripción:</strong> ${ordenActual.descripcion}<br>
             <strong>Cantidad:</strong> ${ordenActual.cantidad}<br>
             <strong>Recurso sugerido:</strong> ${recursoSugerido}
@@ -1227,7 +1316,7 @@ async function cargarActividadesPorRecurso() {
         log(`Cargando actividades para ${recurso}...`);
 
         const datos = await postJson("/api/actividades/recurso", {
-            num_ot: ordenActual.num_ot,
+            num_op: ordenActual.num_op,
             recurso: recurso
         });
 
@@ -1274,7 +1363,7 @@ async function abrirSelectorActividadNoCotizada() {
         log(`Consultando actividades no cotizadas para ${recursoSeleccionado}...`);
 
         const datos = await postJson("/api/actividades/no-cotizadas", {
-            num_ot: ordenActual.num_ot,
+            num_op: ordenActual.num_op,
             recurso: recursoSeleccionado
         });
 
@@ -1369,39 +1458,51 @@ async function seleccionarActividad(actividad) {
     const recursoSelect = document.getElementById("recursoSelect");
     const recursoTextoCompleto = recursoSelect?.selectedOptions?.[0]?.textContent || recursoSeleccionado || "Sin recurso";
 
-    const confirmacionInicio = await Swal.fire({
-        icon: "question",
-        title: "¿Está seguro de iniciar el marcaje?",
-        html: `
-            <strong>OP:</strong> ${ordenActual.num_op}<br>
-            <strong>Actividad:</strong> ${actividad.nombre}${actividad.no_cotizada ? " <em>(no cotizada)</em>" : ""}<br>
-            <strong>Recurso:</strong> ${recursoTextoCompleto}<br><br>
-            Al confirmar, se creará el marcaje real y se enviará MQTT de inicio.
-        `,
-        showCancelButton: true,
-        confirmButtonText: "Sí, iniciar marcaje",
-        cancelButtonText: "Cancelar",
-        reverseButtons: true
-    });
-
-    if (!confirmacionInicio.isConfirmed) {
-        log("Inicio de marcaje cancelado por el usuario.", true);
-        return;
-    }
-
     try {
+        // Iteración 5 (14-resolucion-ot.md): si la actividad está en 2 o más OT, el operario elige.
+        const eleccionOt = await elegirOtParaInicio(ordenActual.num_op, actividad.codigo);
+        if (!eleccionOt) {
+            log("Inicio cancelado: no se eligió la parte de la orden.", true);
+            return;
+        }
+
+        const confirmacionInicio = await Swal.fire({
+            icon: "question",
+            title: "¿Está seguro de iniciar el marcaje?",
+            html: `
+                <strong>OP:</strong> ${ordenActual.num_op}<br>
+                <strong>Actividad:</strong> ${actividad.nombre}${actividad.no_cotizada ? " <em>(no cotizada)</em>" : ""}<br>
+                ${eleccionOt.numeroOt ? filaParte(eleccionOt.numeroOt, eleccionOt.titulo) : ""}
+                <strong>Recurso:</strong> ${recursoTextoCompleto}<br><br>
+                Al confirmar, se creará el marcaje real y se enviará MQTT de inicio.
+            `,
+            showCancelButton: true,
+            confirmButtonText: "Sí, iniciar marcaje",
+            cancelButtonText: "Cancelar",
+            reverseButtons: true
+        });
+
+        if (!confirmacionInicio.isConfirmed) {
+            log("Inicio de marcaje cancelado por el usuario.", true);
+            return;
+        }
+
         log(`Iniciando marcaje real: ${actividad.codigo} - ${actividad.nombre}...`);
 
-        const datos = await postJson("/api/marcajes/iniciar-real-bd", {
+        const datos = await iniciarMarcajeRealConOt({
             num_op: ordenActual.num_op,
-            num_ot: ordenActual.num_ot,
             descripcion: ordenActual.descripcion,
             cantidad: ordenActual.cantidad,
             recurso: recursoSeleccionado,
             actividad: actividad.codigo,
             actividad_nombre: actividad.nombre,
             codigo_usuario: usuarioActual.code
-        });
+        }, eleccionOt.numeroOt);
+
+        if (!datos) {
+            log("Inicio cancelado: no se eligió la parte de la orden.", true);
+            return;
+        }
 
         renderMarcajesActivos(datos.marcajes || []);
         log(datos.mensaje || "Marcaje real iniciado correctamente.");
@@ -1411,10 +1512,15 @@ async function seleccionarActividad(actividad) {
             log(`MQTT inicio: ${r.mensaje || "sin mensaje"}${r.topic ? " · " + r.topic : ""}`, !r.ok);
         }
 
+        const resolucion = datos.resolucion;
+        const conOt = ["AUTOMATICA", "ELEGIDA"].includes(resolucion?.estadoResolucion);
         await Swal.fire({
             icon: "success",
             title: "Marcaje iniciado",
-            text: `OP ${ordenActual.num_op} · ${actividad.nombre}`,
+            html: `
+                OP ${escaparHtml(ordenActual.num_op)} · ${escaparHtml(actividad.nombre)}
+                ${conOt ? "<br>" + filaParte(resolucion.wo_number, resolucion.tituloOt) : ""}
+            `,
             confirmButtonText: "Entendido"
         });
 

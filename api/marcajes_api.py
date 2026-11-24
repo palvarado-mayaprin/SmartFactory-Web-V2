@@ -79,8 +79,10 @@ async def api_iniciar_marcaje_real_bd(payload: PrepararMarcajeRequest):
     resultado = iniciar_marcaje_real_bd(payload.model_dump())
 
     if not resultado["ok"]:
+        # 503 si Optimus no responde al resolver la OT (14-resolucion-ot.md §2.3).
         # 409 porque no es error técnico: es bloqueo de modo protegido o validación operacional.
-        raise HTTPException(status_code=409, detail=resultado)
+        estado = 503 if resultado.get("codigo") == "OPTIMUS_NO_DISPONIBLE" else 409
+        raise HTTPException(status_code=estado, detail=resultado)
 
     marcaje = resultado["marcaje"]
     agregar_o_actualizar_marcaje_estado(marcaje)
@@ -97,7 +99,7 @@ async def api_iniciar_marcaje_real_bd(payload: PrepararMarcajeRequest):
         **resultado,
         "marcajes": marcajes,
     }
-    
+
 @router.post("/iniciar-improductivo")
 async def api_iniciar_marcaje_real_bd(payload: PrepararMarcajeImproductivoRequest):
     resultado = iniciar_marcaje_improductivo_bd(payload.model_dump())

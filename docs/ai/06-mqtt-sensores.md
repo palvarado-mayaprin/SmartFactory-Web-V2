@@ -53,7 +53,7 @@ Existe un **segundo parser**, más laxo, solo para la vista en memoria: `marcaje
 |---|---|---|
 | Inicio | `{num_op},{recurso},{actividad},{cantidad},100,2024/10/09,08:31:55,2024/10/09,18:30:55,0,1` (**fechas fijas**) | `marcajes_service::construir_mensaje_mqtt_inicio` (134-151) |
 | Paro (FINAL/MD) | `[{num_op},{recurso},{actividad},{cantidadcot},0,{fIni},{hIni},{fFin},{hFin},0,0]` (con corchetes; fechas = MIN/MAX de `datossensados` con `/`) | `cierres_service::_construir_mqtt_fin` (413-430) |
-| MT | No se publica nada | `cierres_service.py:556` |
+| MT | No se publica nada | `cierres_service.py:608` |
 
 - [?] Significado de los campos `100`, `0,1`, `0,0` y si el ESP usa las fechas.
 - Si `recurso` o `actividad` contienen comas, el formato se rompe [C].

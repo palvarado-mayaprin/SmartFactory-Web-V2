@@ -29,7 +29,7 @@ FROM resumenmarcajes WHERE actividad=? AND numOp=?
 ```
 Se calcula **después** de insertar la fila del usuario. No filtra por `estado`, así que **incluye las filas `F` anteriores**, ni por recurso ni por fecha.
 
-**Si el SELECT del agregado falla** (`None`) [C] (E2, Fase 4): la rama `else` (`cierres_service.py:830-834`) usa los valores del operario actual (`cantreal_calculada`, sus tiempos y su duración) y **la fila `F` se inserta igualmente**, sin aviso. La fila `F` representa entonces solo el último cierre, no el agregado de la actividad.
+**Si el SELECT del agregado falla** (`None`) [C] (E2, Fase 4): la rama `else` (`cierres_service.py:884-888`) usa los valores del operario actual (`cantreal_calculada`, sus tiempos y su duración) y **la fila `F` se inserta igualmente**, sin aviso. La fila `F` representa entonces solo el último cierre, no el agregado de la actividad.
 
 ### Errores de MySQL durante el cálculo [C] (E1, Fase 4)
 
@@ -62,7 +62,7 @@ Las lecturas del cálculo usan `dtbSmartFactory`, que devuelve `None` ante `mysq
 
 ## 3. Esperado
 
-- Regla vigente declarada en el código: "cantidadreal = último cantpliegos de datossensados − SUM(cantidadreal de MT anteriores)" (`cierres_service.py:387`) [C].
+- Regla vigente declarada en el código: "cantidadreal = último cantpliegos de datossensados − SUM(cantidadreal de MT anteriores)" (`cierres_service.py:428`) [C].
 - [?] El ámbito correcto de "MT anteriores" (misma sesión, recurso, MAC, fecha). **No hay una regla aprobada** (P-04).
 
 ## 4. Escenarios de valores negativos, duplicados o inconsistentes

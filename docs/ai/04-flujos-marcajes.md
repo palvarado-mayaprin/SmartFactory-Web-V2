@@ -3,7 +3,7 @@
 Conceptos:
 - **Marcaje**: usuario + OP + recurso + actividad + topic (`{mac}-OP`).
 - **Productivo**: OP real de Optimus.
-- **Improductivo**: OP centinela **`12345`** (README_V20_23; único criterio [C], `app.js:511`).
+- **Improductivo**: OP centinela **`12345`** (README_V20_23; único criterio [C], `app.js:589`).
 - La cantidad (`cantidadreal`) se explica en `05-cantidadreal.md`. La identificación en `07-identificacion-biometria.md`.
 
 ---
@@ -14,11 +14,11 @@ Conceptos:
 
 | Ruta (función) | Usada por | 1 | 2 | 3 | 4 | Si falla MQTT |
 |---|---|---|---|---|---|---|
-| Apertura productiva `persistencia_marcajes_service::iniciar_marcaje_real_bd` (190-325) | `iniciar-real-bd`, `iniciar-improductivo-bd`, relevo MT, retorno tras improductivo | Validaciones V1-V7 | **INSERT `marcajeactivo`** (248) | **Publicar inicio** `{mac}-OP` (273-295) | Log `APERTURA_REAL_OK` | El marcaje **queda abierto**; respuesta `ok:true` con un mensaje de aviso |
-| Apertura improductiva `::iniciar_marcaje_improductivo_bd` (329-464) | `iniciar-improductivo` | Igual | INSERT (387) | Publicar inicio (412-434) | Log | Igual |
-| Cierre FINAL / MD `cierres_service::ejecutar_cierre_marcaje_real` (670-910) | `ejecutar-cierre-real` | Cálculo y validaciones; SELECT de existencia (733-751) | **Publicar paro** (769-787) | INSERT resumen (792); **si falla → aborta (409) sin DELETE** (v20.24) [+ agregado `F` y suma de pliegos incorrectos (815-861) si FINAL] | DELETE `datossensados` (864) → DELETE `marcajeactivo` (868) | Si `publicar` devuelve `ok:false` → **aborta sin tocar la BD**. ⚠️ Puede devolver `ok:true` con el broker caído (R-04) |
+| Apertura productiva `persistencia_marcajes_service::iniciar_marcaje_real_bd` (211-388) | `iniciar-real-bd`, `iniciar-improductivo-bd`, relevo MT, retorno tras improductivo | (2026-11-24) **Resolución de OT** en Optimus, solo lectura (233-254; el relevo la hereda sin consultar Optimus). Un rechazo termina aquí, sin consultas a SmartFactory. Después, validaciones V1-V7 | **INSERT `marcajeactivo`** (305) | **Publicar inicio** `{mac}-OP` (330-352) | Log `APERTURA_REAL_OK` | El marcaje **queda abierto**; respuesta `ok:true` con un mensaje de aviso |
+| Apertura improductiva `::iniciar_marcaje_improductivo_bd` (392-538) | `iniciar-improductivo` | `SIN_TAREA` sin consultar Optimus (411); V1-V7 | INSERT (461) | Publicar inicio (486-508) | Log | Igual |
+| Cierre FINAL / MD `cierres_service::ejecutar_cierre_marcaje_real` (724-968) | `ejecutar-cierre-real` | Cálculo y validaciones, incluida (2026-11-24) la lectura de la OT fijada en `marcajeactivo` (`_obtener_ot_fijada`; si falla → 409 `ERROR_BD_OT` sin efectos); SELECT de existencia (787-805) | **Publicar paro** (823-841) | INSERT resumen (846); **si falla → aborta (409) sin DELETE** (v20.24) [+ agregado `F` y suma de pliegos incorrectos (869-915) si FINAL] | DELETE `datossensados` (918) → DELETE `marcajeactivo` (922) | Si `publicar` devuelve `ok:false` → **aborta sin tocar la BD**. ⚠️ Puede devolver `ok:true` con el broker caído (R-04) |
 | Cierre MT (misma función) | `ejecutar-cierre-real` | Igual | — (no publica) | INSERT resumen `MT` (si falla → aborta sin DELETE, v20.24) | DELETEs | No aplica |
-| Cierre heredado `persistencia_marcajes_service::cerrar_marcaje_real_bd` (467-549) | `cerrar-real-bd` (sin botón) | SELECT | DELETE `marcajeactivo` | — | — | Sin MQTT, sin resumen, sin borrar `datossensados` |
+| Cierre heredado `persistencia_marcajes_service::cerrar_marcaje_real_bd` (541-623) | `cerrar-real-bd` (sin botón) | SELECT | DELETE `marcajeactivo` | — | — | Sin MQTT, sin resumen, sin borrar `datossensados` |
 
 ### Comportamiento según los flags [C]
 
@@ -47,30 +47,35 @@ El marcaje activo se busca **primero en memoria y después en BD** (`usuarios_se
 ### Actual [C]
 
 **UI** (`app.js`):
-1. `buscarOp` (1092-1135).
-2. Selección de recurso (`cargarActividadesPorRecurso` 1167-1185).
-3. Opcionalmente, `abrirSelectorActividadNoCotizada` (1207-1303). Solo añade la actividad a la lista local.
-4. `seleccionarActividad` (1305-1391): confirmación Swal → `POST /api/marcajes/iniciar-real-bd` con `num_op, num_ot, descripcion, cantidad, recurso, actividad, actividad_nombre, codigo_usuario`.
+1. `buscarOp` (1235-1277).
+2. Selección de recurso (`cargarActividadesPorRecurso` 1309-1327).
+3. Opcionalmente, `abrirSelectorActividadNoCotizada` (1349-1445). Solo añade la actividad a la lista local.
+4. `seleccionarActividad` (1447-1550): (2026-11-24, iteración 5 de `14-resolucion-ot.md`) `elegirOtParaInicio` consulta `POST /api/op/ots`; si `requiereEleccion`, el operario elige la parte de la orden en un Swal de radio («Continuar» / «Volver»; «Volver» cancela sin efectos). Confirmación Swal (con «Parte:» si hubo elección) → `POST /api/marcajes/iniciar-real-bd` con `num_op, descripcion, cantidad, recurso, actividad, actividad_nombre, codigo_usuario` y `numero_ot` **solo** si hubo elección. Ante 409 `SELECCION_OT_REQUERIDA`/`OT_NO_CANDIDATA`: nueva elección con el aviso «Las partes de la orden cambiaron; vuelva a elegir» y **un** reintento. El diálogo de éxito muestra «Parte» con `AUTOMATICA`/`ELEGIDA`.
 
-**Búsqueda de la OP** (`ordenes_service::buscar_orden_produccion` 92-155):
-- La OP se normaliza a dígitos y debe estar en el rango 10.000-1.000.000.
-- `num_ot = OP + "01"`.
-- **La OP guardada es `wo200.wo_job`**, que puede diferir de lo que se tecleó.
+**Búsqueda de la OP** (`ordenes_service::buscar_orden_produccion`; desde el 2026-11-24, `14-resolucion-ot.md` iteración 2):
+- La OP debe ser solo dígitos, existir en `job200` y ser elegible (`resolucion_ot_service::leer_op`); sin rango (P-20).
+- Devuelve `orden = {num_op, descripcion, cantidad}`; `num_op` es `job200.j_number`. Ya no existe `orden.num_ot` (v20.25).
 - `j_quantity` pasa a ser la cantidad cotizada.
-- Recursos: `obtener_recursos_de_orden` (17-60), **sin filtro por OT** (R-10).
-- Recurso sugerido: el primero cuyo código sea **subcadena** de `staf_resource` (132-136).
+- Recursos: `obtener_recursos_de_orden` (14-57), **sin filtro por OP ni OT** (R-10, fuera de alcance de v20.25).
+- Actividades (v20.25): vigentes (`act_discont = '0'`) del centro de costo con tarea en **cualquier** OT de la OP (cotizadas) o sin tarea en ninguna (no cotizadas), por `num_op`.
+- Recurso sugerido: el primero cuyo código sea **subcadena** de `staf_resource` (110-114).
+
+**Resolución de OT (2026-11-24, `14-resolucion-ot.md` iteración 4)** [C]: antes de V1, `iniciar_marcaje_real_bd` llama a `resolucion_ot_service::resolver_desde_optimus(num_op, actividad, numero_ot)` (solo lectura en `job200`, `wo` y `wo_task200`).
+- Rechazo (`OP_*`, `SELECCION_OT_REQUERIDA`, `OT_NO_CANDIDATA`, `RESPUESTA_INVALIDA`) → 409 `modo=RESOLUCION_OT` con `codigo`, `mensaje` y, si las hay, `ots_candidatas`. `OPTIMUS_NO_DISPONIBLE` → **503**. Log `APERTURA_BLOQUEADA` con el código. No consulta `macdirectorio` ni `marcajeactivo`, no escribe ni publica.
+- Correcto → `wo_number`, `tk_id`, `estadoResolucion` (`AUTOMATICA`/`ELEGIDA`/`SIN_TAREA`) y `tituloOt` se añaden al payload y van al INSERT. Con `SIN_TAREA`, OT y tarea `NULL`. La respuesta incluye `resolucion`.
+- Sin actividad (en blanco) → `VALIDACION_BLOQUEADA` antes de consultar Optimus.
 
 **Validaciones de la apertura**, en orden:
 
 | ID | Regla | Función (línea) | Fuente | Ante error de BD |
 |---|---|---|---|---|
-| V1 | El usuario no tiene marcaje activo | `marcajes_service::preparar_inicio_marcaje` → `consultar_marcaje_activo` (192) | Memoria, luego BD | Pasa (R-03) |
+| V1 | El usuario no tiene marcaje activo | `marcajes_service::preparar_inicio_marcaje` → `consultar_marcaje_activo` (224) | Memoria, luego BD | Pasa (R-03) |
 | V2 | El recurso tiene MAC: `macdirectorio WHERE recurso=R OR recursoalternativo=R LIMIT 1` | `obtener_mac_por_recurso` (22-41) | BD | Bloquea ("sin MAC") |
 | V3 | Máquina libre: `marcajeactivo WHERE recurso=R OR topic=T` | `consultar_marcaje_activo_por_recurso_o_topic` (46-85) | BD | Pasa |
 | V4 | Máquina libre en memoria (mismo recurso o topic) | `consultar_marcaje_temporal_por_recurso_o_topic` (88-119) | Memoria | — |
-| V5 | Campos críticos no vacíos | `persistencia_marcajes_service::validar_apertura_marcaje_real` (120-135) | — | — |
-| V6 | El usuario no está en `marcajeactivo` (repite V1, solo BD) | idem (137-158) | BD | Pasa |
-| V7 | Topic o recurso libre (repite V3) | idem (160-182) | BD | Pasa |
+| V5 | Campos críticos no vacíos | `persistencia_marcajes_service::validar_apertura_marcaje_real` (125-140) | — | — |
+| V6 | El usuario no está en `marcajeactivo` (repite V1, solo BD) | idem (142-163) | BD | Pasa |
+| V7 | Topic o recurso libre (repite V3) | idem (165-187) | BD | Pasa |
 
 > V2 incluye `OR recursoalternativo` (`services/marcajes_service.py:32`; sin commit hasta 2026-11-15, versionado en un commit propio). Sin él, solo se busca por `recurso`.
 > - Alcance [C]: todas las aperturas (productiva, improductiva, pausa, retorno tras improductivo y los endpoints `preparar`/`simular`) pasan por `obtener_mac_por_recurso`; el relevo MT reutiliza el topic del marcaje cerrado y no consulta `macdirectorio`. `obtener_recursos_existentes_improductivo` y la carga de MAC de `mqtt_service` no cambian.
@@ -79,7 +84,7 @@ El marcaje activo se busca **primero en memoria y después en BD** (`usuarios_se
 > - **No lo modifiques ni lo reviertas sin autorización** (P-09).
 
 **Efectos**:
-- INSERT en `marcajeactivo (numOp, descrip, cantidad, recurso, actividad, username, topic, produccionUnidad='UNIDAD')`. No se guarda la hora de inicio.
+- INSERT en `marcajeactivo (numOp, descrip, cantidad, recurso, actividad, username, topic, produccionUnidad='UNIDAD', wo_number, tk_id, estadoResolucion, tituloOt)` (las 4 últimas desde el 2026-11-24; `NULL` si la ruta no las trae). No se guarda la hora de inicio.
 - Publicación del inicio (formato en `06-mqtt-sensores.md` §3).
 - Memoria: `agregar_o_actualizar_marcaje_estado`, con `fecha_inicio` = hora del servidor.
 - WS `MARCAGES_ACTIVOS_ACTUALIZADOS`.
@@ -90,7 +95,7 @@ El marcaje activo se busca **primero en memoria y después en BD** (`usuarios_se
 
 ### Esperado (reglas conocidas)
 
-- Un operario solo puede tener un marcaje abierto; una máquina solo uno a la vez (docstring de `validar_apertura_marcaje_real`, 105-113) [C, regla declarada en el código].
+- Un operario solo puede tener un marcaje abierto; una máquina solo uno a la vez (docstring de `validar_apertura_marcaje_real`, 110-118) [C, regla declarada en el código].
 - Los recursos ofrecidos deberían ser los de la OT, como en PyQt (`../src/widgets/acciones_botones.py:2284-2289`) [I: es la regla original; no consta que se cambiara a propósito].
 
 ### Problemas
@@ -116,22 +121,22 @@ El marcaje activo se busca **primero en memoria y después en BD** (`usuarios_se
 
 **Entrada directa**:
 1. El operario elige un motivo en `#ImproductivoSelect` (`COMIDA`, `MANTO`, `FALLA`, `CAMBIO`; `templates/index.html:168-172`).
-2. `SeleccionarRecurso` (`app.js:995-1025`) carga **todos** los recursos de `macdirectorio`.
-3. **El `onchange` del select de recursos** lanza `marcajeTiempoImproductivo` (`index.html:180`; `app.js:1053-1140`) → confirmación → `POST /api/marcajes/iniciar-improductivo`, con `num_op="12345"`, `cantidad="12345"`, `descripcion="Tiempo Improductivo"`.
+2. `SeleccionarRecurso` (`app.js:1085-1115`) carga **todos** los recursos de `macdirectorio`.
+3. **El `onchange` del select de recursos** lanza `marcajeTiempoImproductivo` (`index.html:180`; `app.js:1143-1230`) → confirmación → `POST /api/marcajes/iniciar-improductivo`, con `num_op="12345"`, `cantidad="12345"`, `descripcion="Tiempo Improductivo"`.
    - Para elegir el recurso que ya aparece seleccionado al principio, hay que cambiar antes a otro (no hay botón de confirmación).
-   - **Diálogo de éxito con `OP null`** [C por lectura estática; no reproducido en navegador] (E6, Fase 4): el texto es `` `OP ${ordenActual} · …` `` (`app.js:1112`). `ordenActual` solo vale `"12345"` si antes se pulsó *Marcar Tiempo Improductivo* (`SeleccionarRecurso`, `app.js:1017`); tras un éxito se pone a `null` (`app.js:1117`). El contenedor `#selectorRecursoTiempoImproductivo` **nunca se oculta ni se vacía** después del éxito (solo lo toca `prepararRecursosImproductivo`, `app.js:1028-1051`). Si el siguiente operario cambia directamente ese select, la apertura se ejecuta y el diálogo muestra `OP null` (u `OP [object Object]` si había buscado una OP productiva). El backend recibe siempre `num_op="12345"` fijo, así que **los datos guardados no se ven afectados**; es un defecto de presentación (R-31).
+   - **Diálogo de éxito con `OP null`** [C por lectura estática; no reproducido en navegador] (E6, Fase 4): el texto es `` `OP ${ordenActual} · …` `` (`app.js:1202`). `ordenActual` solo vale `"12345"` si antes se pulsó *Marcar Tiempo Improductivo* (`SeleccionarRecurso`, `app.js:1107`); tras un éxito se pone a `null` (`app.js:1207`). El contenedor `#selectorRecursoTiempoImproductivo` **nunca se oculta ni se vacía** después del éxito (solo lo toca `prepararRecursosImproductivo`, `app.js:1118-1141`). Si el siguiente operario cambia directamente ese select, la apertura se ejecuta y el diálogo muestra `OP null` (u `OP [object Object]` si había buscado una OP productiva). El backend recibe siempre `num_op="12345"` fijo, así que **los datos guardados no se ven afectados**; es un defecto de presentación (R-31).
 
 **Entrada tras pausa** (§5.2).
 
-**Backend**: `iniciar_marcaje_improductivo_bd` → `simular_inicio_marcaje_improductivo` → `preparar_inicio_marcaje_improductivo`. Aplica **las mismas V1-V7**, INSERT y **publica el inicio MQTT con OP 12345**.
+**Backend**: `iniciar_marcaje_improductivo_bd` → `simular_inicio_marcaje_improductivo` → `preparar_inicio_marcaje_improductivo`. Aplica **las mismas V1-V7**, INSERT y **publica el inicio MQTT con OP 12345**. (2026-11-24) Se guarda con `estadoResolucion='SIN_TAREA'` y OT y tarea `NULL`, sin consultar Optimus.
 
 **Efectos sobre otros**:
 - **La máquina queda ocupada** durante el tiempo improductivo.
 - El ESP envía DATOS `12345,…`, que se guardan en `datossensados` (evidencia en el log del 2026-10-12).
 
-**Inconsistencia** [C]: `simular_inicio_marcaje_improductivo` (`marcajes_service.py:389-398`) **no incluye `descrip` ni `cantidad`** en `valores`, así que el marcaje en memoria tiene `cantidad=None`. El INSERT en BD sí guarda 12345. Al cerrar, `cantidadcot` será 0 o 12345 según de dónde salga el objeto (R-18).
+**Inconsistencia** [C]: `simular_inicio_marcaje_improductivo` (`marcajes_service.py:422-431`) **no incluye `descrip` ni `cantidad`** en `valores`, así que el marcaje en memoria tiene `cantidad=None`. El INSERT en BD sí guarda 12345. Al cerrar, `cantidadcot` será 0 o 12345 según de dónde salga el objeto (R-18).
 
-En Optimus no existen las actividades COMIDA/MANTO/… → `wo_number=0, tk_id=0` en el resumen [C].
+En Optimus no existen las actividades COMIDA/MANTO/… → `wo_number=0, tk_id=0` en el resumen [C]. Desde el 2026-11-24 sale de `SIN_TAREA` (P-19) y ya no se consulta `wo_task200`.
 
 ### Esperado
 
@@ -160,13 +165,14 @@ En Optimus no existen las actividades COMIDA/MANTO/… → `wo_number=0, tk_id=0
 4. `POST /api/marcajes/ejecutar-cierre-real` con **el objeto marcaje completo que tiene el navegador** y `pliegos_incorrectos`.
 
 **Backend** (orden en §0):
-1. `simular_cierre_marcaje` (433-666) valida:
+1. `simular_cierre_marcaje` (474-720) valida:
    - el tipo de cierre;
    - que `pausa_improductiva` solo vaya con MD;
    - los campos críticos `numOp, recurso, actividad, username, topic`;
    - (v20.24) `pliegos_incorrectos`: `None` o entero ≥ 0 (también lo valida Pydantic con 422). En OP 12345 se fuerza `NULL`.
 2. Calcula la cantidad, los tiempos y `wo_number/tk_id`.
-   - `_obtener_wo_tk` usa `dtbOptimus`, que **lanza excepción**. La simulación se llama fuera del `try` (687) → HTTP 500 **antes** de escribir [C].
+   - (2026-11-24) `wo_number/tk_id` salen de la OT **fijada al abrir** (`_obtener_ot_fijada`): `SELECT wo_number, tk_id, estadoResolucion, tituloOt FROM marcajeactivo` con las mismas condiciones que el SELECT de existencia. `AUTOMATICA`/`ELEGIDA` → los de la fila; `SIN_TAREA` → `0`/`0` (P-19); estado nulo, desconocido o sin fila → respaldo `_obtener_wo_tk` (comportamiento anterior). Error de BD (`None`) → 409 `ERROR_BD_OT` **antes** de publicar o escribir. `valores` añade `estadoResolucion` y `tituloOt`. La fila `F` usa los mismos `wo_number/tk_id`.
+   - `_obtener_wo_tk` (solo respaldo) usa `dtbOptimus`, que **lanza excepción**. La simulación se llama fuera del `try` (741) → HTTP 500 **antes** de escribir [C].
 3. Comprueba los flags.
 4. SELECT de existencia **exacto** (numOp, recurso, actividad, username, topic). Un error de BD también se trata como "no existe" (bloquea, seguro).
 5. Publica el paro.
@@ -180,21 +186,21 @@ En Optimus no existen las actividades COMIDA/MANTO/… → `wo_number=0, tk_id=0
    ```
    (v20.24) Después, `SELECT SUM(pliegosIncorrectos) … WHERE actividad, numOp AND (estado IS NULL OR estado <> 'F')`: suma solo filas de operario, de todos los ciclos. Si falla o no hay valores → `NULL`. Semántica completa de la fila `F` y decisión pendiente: `10-decisiones-pendientes.md` §3.4 (P-16).
    Seguido de `INSERT (…, username='SMARTFACTORY', estado='F', …, pliegosIncorrectos)`.
-   - Si ese SELECT falla (`None`), la fila `F` **se inserta igualmente** con la cantidad y los tiempos del operario actual (`cierres_service.py:830-834`) [C] (E2). Ver `05-cantidadreal.md`.
+   - Si ese SELECT falla (`None`), la fila `F` **se inserta igualmente** con la cantidad y los tiempos del operario actual (`cierres_service.py:884-888`) [C] (E2). Ver `05-cantidadreal.md`.
    - Antes, en el paso 2, un error de MySQL en las lecturas de `datossensados` o de la suma de MT se convierte en 0 sin aviso y el cierre continúa (E1, `05-cantidadreal.md`).
 8. DELETE `datossensados WHERE numOp, actividad, mac`.
 9. DELETE `marcajeactivo WHERE numOp, actividad, username` (**sin recurso ni topic**).
 10. Salvo el INSERT del operario (paso 6), **ningún resultado de INSERT/DELETE se comprueba.** La respuesta es `ok:true` (R-01).
 11. API: quita el marcaje de la memoria por `id` + WS.
 
-**Flujo posterior ARR** (v20.21, `app.js:279-391`, `841-849`):
+**Flujo posterior ARR** (v20.21, `app.js:358-469`, `841-849`):
 - Si `tipoCierre==="FINAL"` y el código de actividad contiene "ARR" (sin distinguir mayúsculas), se ofrece abrir el *tiraje* de la misma OP y recurso.
 - Se reconstruye la OP con `/api/op/buscar`, se valida que el recurso siga en la lista y el operario elige la actividad (flujo §2).
 - No hereda MAC, topic, tiempos ni cantidades.
 
 ### Esperado
 
-- "Cierre definitivo de actividad, inserta resumen usuario + resumen SMARTFACTORY estado F" (docstring 677-686) [C, declarado].
+- "Cierre definitivo de actividad, inserta resumen usuario + resumen SMARTFACTORY estado F" (docstring 731-740) [C, declarado].
 - [?] Si el agregado debe excluir las filas `F` anteriores o filtrar por recurso (P-04).
 
 ### Problemas
@@ -218,7 +224,7 @@ En Optimus no existen las actividades COMIDA/MANTO/… → `wo_number=0, tk_id=0
 
 ### 5.2 Pausa por actividad improductiva (v20.22) [C]
 
-`app.js:393-508`, `cierres_service.py:456-460, 560-565`:
+`app.js:471-586`, `cierres_service.py:497-501, 612-617`:
 
 1. Botón *PAUSA POR ACTIVIDAD IMPRODUCTIVA* → exige `total_usuario`.
 2. Cierre **MD forzado** con `pausa_improductiva=true` → el INSERT lleva `variable01 = 1`.
@@ -227,10 +233,11 @@ En Optimus no existen las actividades COMIDA/MANTO/… → `wo_number=0, tk_id=0
 
 ### 5.3 Retorno tras improductivo (v20.23) [C]
 
-`app.js:510-665`, `cierres_service::obtener_ultimo_resumen_recurso_usuario` (58-102):
+`app.js:588-751`, `cierres_service::obtener_ultimo_resumen_recurso_usuario` (58-102):
 
 1. **Antes** de cerrar un marcaje con OP 12345: `SELECT * FROM resumenmarcajes WHERE recurso AND username ORDER BY tiempofinal DESC LIMIT 1`.
 2. Si ese registro tiene `variable01 = 1` y el cierre termina bien → se ofrece reabrir la OP y actividad anteriores con el flujo normal (`/api/op/buscar` → cotizadas → no cotizadas → `/iniciar-real-bd`).
+   - (2026-11-24, iteración 5) Se envía `numero_ot = registro.wo_number` si es un entero > 0 (la OT del marcaje anterior). Si ya no es candidata (409 de OT) → nueva elección con aviso y un reintento; «Volver» → error «No se pudo reanudar la actividad…», sin crear nada.
 3. Si algo falla, el cierre del improductivo no se revierte.
 
 - [I] `tiempofinal` viene del reloj del ESP, o de la hora del servidor si no hubo datos. Un desfase de relojes podría elegir un registro inesperado.
@@ -244,20 +251,21 @@ En Optimus no existen las actividades COMIDA/MANTO/… → `wo_number=0, tk_id=0
 1. **No publica MQTT**: el ESP sigue contando.
 2. INSERT `estado='MT'`.
 3. **Borra `datossensados` de numOp+actividad+mac** y borra `marcajeactivo`.
-4. Devuelve `relevo_pendiente` (`cierres_service.py:872-888`).
-5. La UI lo guarda **solo** en la variable JS `relevoMtPendiente` (`app.js:805-808`) y muestra el panel.
-6. El siguiente operario que se identifica **en esa misma pestaña** dispara `iniciarRelevoMtAutomatico({confirmar:false})` (`app.js:184-197`, `925-975`).
-7. Se llama a `POST /iniciar-relevo-mt-real` → `iniciar_relevo_mt_real_bd` (552-626).
+4. Devuelve `relevo_pendiente` (`cierres_service.py:926-946`). (2026-11-24) Lleva `wo_number`, `tk_id`, `estadoResolucion` y `tituloOt` de `valores` y ya no `num_ot`. La UI (`construirRelevoPendienteDesdeCierre`) copia esos 4 campos de `datos.valores`.
+5. La UI lo guarda **solo** en la variable JS `relevoMtPendiente` (`app.js:891-894`) y muestra el panel.
+6. El siguiente operario que se identifica **en esa misma pestaña** dispara `iniciarRelevoMtAutomatico({confirmar:false})` (`app.js:263-276`, `925-975`).
+7. Se llama a `POST /iniciar-relevo-mt-real` → `iniciar_relevo_mt_real_bd` (664-748).
 8. Esa función construye el payload y **reutiliza `iniciar_marcaje_real_bd`**: mismas validaciones, INSERT y **nueva publicación del inicio al ESP**.
+   - (2026-11-24) **Hereda** la OT sin consultar Optimus (`_validar_resolucion_relevo`, que solo valida la forma): `AUTOMATICA`/`ELEGIDA` exigen `wo_number` y `tk_id` enteros positivos; `SIN_TAREA` exige vacíos (`0` cuenta como vacío, porque el cierre envía 0/0; decisión del usuario del 2026-11-24); estado ausente o nulo (marcaje antiguo) → todo `NULL`. Datos incoherentes o un estado desconocido → 409 `DATOS_RELEVO_INCOMPLETOS` sin efectos. Se pasan como `resolucion=` a `iniciar_marcaje_real_bd`.
 
-**Cómo se pierde el relevo**: recargar la página o pulsar *Cancelar*, identificarse en otra PC, o pulsar *Cancelar relevo* (`app.js:917-923`). En todos los casos:
+**Cómo se pierde el relevo**: recargar la página o pulsar *Cancelar*, identificarse en otra PC, o pulsar *Cancelar relevo* (`app.js:1007-1013`). En todos los casos:
 - La máquina sigue produciendo **sin marcaje**.
 - La máquina aparece **libre** y otro operario podría abrir otra OP en ella.
 - Los DATOS se siguen acumulando en `datossensados` bajo la misma numOp y actividad, y los heredará el siguiente marcaje que coincida [C mecanismo / I consecuencia].
 
 ### Esperado
 
-- "Reporte parcial sin detener máquina… Solicitar identificación inmediata del siguiente operario. No se publica MQTT de paro" (`cierres_service.py:609-610`; README_V18) [C, declarado].
+- "Reporte parcial sin detener máquina… Solicitar identificación inmediata del siguiente operario. No se publica MQTT de paro" (`cierres_service.py:661-662`; README_V18) [C, declarado].
 
 ### Problemas
 
@@ -269,8 +277,8 @@ En Optimus no existen las actividades COMIDA/MANTO/… → `wo_number=0, tk_id=0
 
 ## 7. Cierres desde las tarjetas del sidebar [C]
 
-- **"Cierre general"** (`app.js:1546-1550`, `1605-1616`): solo lanza la lectura de huella. Se cierra **el marcaje de quien pone la huella**, no el de la tarjeta.
-- **"Cierre SU/ADMIN"** (`app.js:1552-1556`, `1623-1648`): carga el objeto de la tarjeta como `marcajeActivoUsuario` sin huella. El INSERT usa el `username` del dueño del marcaje.
+- **"Cierre general"** (`app.js:1652-1656`, `1605-1616`): solo lanza la lectura de huella. Se cierra **el marcaje de quien pone la huella**, no el de la tarjeta.
+- **"Cierre SU/ADMIN"** (`app.js:1658-1662`, `1623-1648`): carga el objeto de la tarjeta como `marcajeActivoUsuario` sin huella. El INSERT usa el `username` del dueño del marcaje.
   - **No queda registro de quién cerró**: `usuarioFinalizacion` no se usa.
 
 ---
