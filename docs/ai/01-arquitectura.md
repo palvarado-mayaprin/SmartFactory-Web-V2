@@ -115,14 +115,14 @@ Identificador en memoria [C]: `"{modo}|{username}|{numOp}|{recurso}|{actividad}"
 
 ## 6. Frontend [C]
 
-- **Carga inicial** (`app.js:1793-1798`, `1869-1870`):
+- **Carga inicial** (`app.js:1800-1805`, `1869-1870`):
   - `revisarBackend`, `revisarServicioHuellaLocal`, `consultarModoPersistencia`.
   - `cargarMarcajesActivosIniciales` (**POST `sincronizar-desde-bd`**, que reemplaza la memoria del backend).
   - `conectarWebSocketMarcajes`, `aplicarVisibilidadPorRol`, `cargarEstadoMqtt`, `conectarWebSocketMqtt`.
 - **Pasos de la UI**: 1 usuario → 2 OP → 3 actividad (`activarPaso`, `app.js:22-30`). Paneles: cierre, relevo MT, improductivo.
-- **Roles** ADMIN/SU: **solo visibilidad CSS** (`.admin-only`, `.su-admin-only`; `app.js:2078-2093`). El backend no aplica ningún permiso.
-- **Riesgo de XSS**: hay muchos `innerHTML` con datos de BD o MQTT sin escapar (p. ej. `app.js:1343`, `1533-1557`, `1825-1831`) [C]. Impacto [?] (los datos vienen de sistemas internos).
-- **`static/js/resolucion_ot.js`** (2026-11-24, iteración 5 de `14-resolucion-ot.md`): lógica pura de la elección de OT (`etiquetaOt`, `construirOpcionesOt`), sin efectos al cargar. Se carga después de `cierre_validacion.js` (usa su `escaparHtml`) y antes de `app.js` (`templates/index.html:211-213`). Probada con `node --test`.
+- **Roles** ADMIN/SU: **solo visibilidad CSS** (`.admin-only`, `.su-admin-only`; `app.js:2085-2100`). El backend no aplica ningún permiso.
+- **Riesgo de XSS**: hay muchos `innerHTML` con datos de BD o MQTT sin escapar (p. ej. `app.js:1350`, `1533-1557`, `1825-1831`) [C]. Impacto [?] (los datos vienen de sistemas internos).
+- **`static/js/resolucion_ot.js`** (2026-11-24, iteración 5 de `14-resolucion-ot.md`): lógica pura de la elección de OT (`textoOt`, `construirOpcionesOt`; select con solo la descripción desde v20.25.1), sin efectos al cargar. Se carga después de `cierre_validacion.js` (usa su `escaparHtml`) y antes de `app.js` (`templates/index.html:211-213`). Probada con `node --test`.
 - **Dependencia externa**: SweetAlert2 desde `cdn.jsdelivr.net` sin versión exacta (`templates/index.html:210`). Sin internet, los diálogos fallan [I].
 - **Funciones heredadas sin efecto** (se conservan por compatibilidad): `renderSimulacionCierre`, `renderSimulacionMarcaje`, `activarMarcajeSimulado`, `iniciarMarcajeRealBd`, `cerrarMarcajeSimulado`.
 - `cerrarMarcajeRealBdDesdeTexto`/`cerrarMarcajeRealBd` siguen definidas y llaman al endpoint heredado `cerrar-real-bd`. **[C] No hay ningún botón que las invoque.**

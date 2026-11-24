@@ -1,5 +1,5 @@
 /*
- * Elección de OT al iniciar un marcaje (docs/ai/14-resolucion-ot.md, iteración 5).
+ * Elección de OT al iniciar un marcaje (docs/ai/14-resolucion-ot.md, iteración 5; v20.25.1).
  * Lógica pura, sin efectos al cargar: se usa desde app.js y se prueba con
  * `node --test "tests/js/*.test.js"`. Requiere escaparHtml (cierre_validacion.js).
  */
@@ -13,28 +13,44 @@ function escaparHtmlOt(texto) {
 }
 
 /**
- * Etiqueta HTML (escapada) de una OT: el título como texto principal y, debajo y más
- * pequeño, «OT n». Sin título: solo «OT n».
+ * Texto de una OT para el operario: solo la descripción (wo_title2). El número aparece
+ * únicamente si no hay título («OT n») o si el título se repite en la lista («título (OT n)»).
+ * Devuelve texto SIN escapar.
  * @param {{numeroOt: string|number, titulo?: string|null}} ot
+ * @param {Set<string>} [repetidos] títulos que aparecen en más de una OT
  */
-function etiquetaOt(ot) {
-    const numero = `OT ${escaparHtmlOt(ot?.numeroOt)}`;
+function textoOt(ot, repetidos = new Set()) {
+    const numero = `OT ${ot?.numeroOt ?? ""}`;
     const titulo = String(ot?.titulo ?? "").trim();
-    return titulo ? `${escaparHtmlOt(titulo)}<br><small>${numero}</small>` : numero;
+    if (!titulo) {
+        return numero;
+    }
+    return repetidos.has(titulo) ? `${titulo} (${numero})` : titulo;
 }
 
 /**
- * Opciones para el `input: "radio"` de SweetAlert2. Se usa un Map y no un objeto porque
- * JavaScript reordena las claves numéricas y se perdería el orden por wo_seq del servidor.
- * @returns {Map<string, string>} String(numeroOt) → etiqueta HTML escapada, en el orden recibido.
+ * Opciones del `input: "select"` de SweetAlert2: String(numeroOt) → etiqueta escapada,
+ * en el MISMO orden recibido (wo_seq del servidor). Es un Map porque un objeto reordenaría
+ * las claves numéricas, y escapada porque SweetAlert2 inserta las etiquetas como HTML.
+ * @returns {Map<string, string>}
  */
 function construirOpcionesOt(ots) {
     if (!Array.isArray(ots)) {
         throw new TypeError("construirOpcionesOt espera una lista de OT.");
     }
-    return new Map(ots.map((ot) => [String(ot.numeroOt), etiquetaOt(ot)]));
+
+    const vistos = new Set();
+    const repetidos = new Set();
+    for (const ot of ots) {
+        const titulo = String(ot?.titulo ?? "").trim();
+        if (titulo) {
+            (vistos.has(titulo) ? repetidos : vistos).add(titulo);
+        }
+    }
+
+    return new Map(ots.map((ot) => [String(ot.numeroOt), escaparHtmlOt(textoOt(ot, repetidos))]));
 }
 
 if (typeof module !== "undefined" && module.exports) {
-    module.exports = { etiquetaOt, construirOpcionesOt };
+    module.exports = { textoOt, construirOpcionesOt };
 }

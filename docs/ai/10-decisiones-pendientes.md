@@ -89,7 +89,7 @@ Contrastadas el 2026-11-13 con lectura estática del código; no se ejecutó nad
 | E3 | Si MySQL falla al iniciar, la lista de MAC queda vacía y MQTT sigue sin `-DATOS`; `_on_message` no tiene `try/except` propio | **Confirmada [C]**. Precisión añadida: el error también se borra del estado (124, 171). El efecto en paho se conserva como [I] | `mqtt_service.py:72-85, 87-100, 124, 200-254` | `06` §1 y §4; `09` R-09 y R-30 (nuevo) |
 | E4 | `usuario.username` = `staf_name`; en `marcajeactivo`/`resumenmarcajes`, `username` = `staf_code` | **Confirmada [C]** | `usuarios_service.py:46-52`; `marcajes_service.py:386, 428` | `02` §3; `07` §2 |
 | E5 | `None` solo ante `mysql.connector.Error`; otras excepciones se propagan | **Confirmada [C]**. Corrige la frase anterior "no lanza excepción" | `db/conexion.py:41-44` | `02` §1; `09` R-03 |
-| E6 | El diálogo de éxito del improductivo puede mostrar `OP null` | **Confirmada [C, lectura estática]**; no reproducida en navegador | `app.js:1107, 1202, 1207, 1118-1141` | `04` §3; `09` R-31 (nuevo) |
+| E6 | El diálogo de éxito del improductivo puede mostrar `OP null` | **Confirmada [C, lectura estática]**; no reproducida en navegador | `app.js:1114, 1209, 1214, 1125-1148` | `04` §3; `09` R-31 (nuevo) |
 
 ### 3.4 Semántica actual de la fila `F` (v20.24) [C] — pendiente de decisión (P-16)
 
@@ -126,3 +126,4 @@ Consecuencias que hay que conocer antes de usar la fila `F` en reportes:
 | 2026-11-24 | Usuario | Adaptar la resolución de OT y tarea de PRODIGOS V2: OT y tarea se fijan al abrir en columnas nuevas de `marcajeactivo`; se mantiene el centro de costo como recurso; sin caché de contingencia; se conserva el botón de actividades no cotizadas | Diseño en `14-resolucion-ot.md`; no implementado |
 | 2026-11-24 | Usuario | Migración de `marcajeactivo` solo en `smartfactory` (P-18); `SIN_TAREA` → `0`/`0` en `resumenmarcajes` (P-19); columnas nuevas `INT` para OT y tarea | Script en `migraciones/`; ejecutado el 2026-11-24 |
 | 2026-11-24 | Usuario | Versión **20.25.0** (`main.py`, `templates/index.html`) y `readme/README_V20_25.md`: resolución de OT y tarea (`14-resolucion-ot.md`, iteraciones 1-6). Relevo `SIN_TAREA` acepta 0/0 como vacío. Despliegue de backend y frontend **juntos**; prueba en planta pendiente | `tests/test_resolucion_ot*.py`, `tests/test_ot_fijada.py`, `tests/js/resolucion_ot.test.js` |
+| 2026-11-24 | Usuario | Elección de OT con **select**, mostrando solo la descripción (`wo_title2`); el número de OT solo si no hay título o si el título se repite. Sustituye a los radios, que se salían del diálogo. Versión **20.25.1** (`main.py`) y `readme/README_V20_25_1.md`; sin cambios de backend ni BD | `tests/js/resolucion_ot.test.js` |

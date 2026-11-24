@@ -3,7 +3,7 @@
 Conceptos:
 - **Marcaje**: usuario + OP + recurso + actividad + topic (`{mac}-OP`).
 - **Productivo**: OP real de Optimus.
-- **Improductivo**: OP centinela **`12345`** (README_V20_23; único criterio [C], `app.js:589`).
+- **Improductivo**: OP centinela **`12345`** (README_V20_23; único criterio [C], `app.js:596`).
 - La cantidad (`cantidadreal`) se explica en `05-cantidadreal.md`. La identificación en `07-identificacion-biometria.md`.
 
 ---
@@ -47,10 +47,10 @@ El marcaje activo se busca **primero en memoria y después en BD** (`usuarios_se
 ### Actual [C]
 
 **UI** (`app.js`):
-1. `buscarOp` (1235-1277).
-2. Selección de recurso (`cargarActividadesPorRecurso` 1309-1327).
-3. Opcionalmente, `abrirSelectorActividadNoCotizada` (1349-1445). Solo añade la actividad a la lista local.
-4. `seleccionarActividad` (1447-1550): (2026-11-24, iteración 5 de `14-resolucion-ot.md`) `elegirOtParaInicio` consulta `POST /api/op/ots`; si `requiereEleccion`, el operario elige la parte de la orden en un Swal de radio («Continuar» / «Volver»; «Volver» cancela sin efectos). Confirmación Swal (con «Parte:» si hubo elección) → `POST /api/marcajes/iniciar-real-bd` con `num_op, descripcion, cantidad, recurso, actividad, actividad_nombre, codigo_usuario` y `numero_ot` **solo** si hubo elección. Ante 409 `SELECCION_OT_REQUERIDA`/`OT_NO_CANDIDATA`: nueva elección con el aviso «Las partes de la orden cambiaron; vuelva a elegir» y **un** reintento. El diálogo de éxito muestra «Parte» con `AUTOMATICA`/`ELEGIDA`.
+1. `buscarOp` (1242-1284).
+2. Selección de recurso (`cargarActividadesPorRecurso` 1316-1334).
+3. Opcionalmente, `abrirSelectorActividadNoCotizada` (1356-1452). Solo añade la actividad a la lista local.
+4. `seleccionarActividad` (1454-1557): (2026-11-24, iteración 5 de `14-resolucion-ot.md`) `elegirOtParaInicio` consulta `POST /api/op/ots`; si `requiereEleccion`, el operario elige la parte de la orden en un select con **solo la descripción** de cada OT, como el de actividades no cotizadas («Continuar» exige elegir; «Volver» cancela sin efectos). El número de OT solo aparece si no hay título o si el título se repite (v20.25.1). Confirmación Swal (con «Parte: descripción» si hubo elección) → `POST /api/marcajes/iniciar-real-bd` con `num_op, descripcion, cantidad, recurso, actividad, actividad_nombre, codigo_usuario` y `numero_ot` **solo** si hubo elección. Ante 409 `SELECCION_OT_REQUERIDA`/`OT_NO_CANDIDATA`: nueva elección con el aviso «Las partes de la orden cambiaron; vuelva a elegir» y **un** reintento. El diálogo de éxito muestra «Parte» con `AUTOMATICA`/`ELEGIDA`.
 
 **Búsqueda de la OP** (`ordenes_service::buscar_orden_produccion`; desde el 2026-11-24, `14-resolucion-ot.md` iteración 2):
 - La OP debe ser solo dígitos, existir en `job200` y ser elegible (`resolucion_ot_service::leer_op`); sin rango (P-20).
@@ -121,10 +121,10 @@ El marcaje activo se busca **primero en memoria y después en BD** (`usuarios_se
 
 **Entrada directa**:
 1. El operario elige un motivo en `#ImproductivoSelect` (`COMIDA`, `MANTO`, `FALLA`, `CAMBIO`; `templates/index.html:168-172`).
-2. `SeleccionarRecurso` (`app.js:1085-1115`) carga **todos** los recursos de `macdirectorio`.
-3. **El `onchange` del select de recursos** lanza `marcajeTiempoImproductivo` (`index.html:180`; `app.js:1143-1230`) → confirmación → `POST /api/marcajes/iniciar-improductivo`, con `num_op="12345"`, `cantidad="12345"`, `descripcion="Tiempo Improductivo"`.
+2. `SeleccionarRecurso` (`app.js:1092-1122`) carga **todos** los recursos de `macdirectorio`.
+3. **El `onchange` del select de recursos** lanza `marcajeTiempoImproductivo` (`index.html:180`; `app.js:1150-1237`) → confirmación → `POST /api/marcajes/iniciar-improductivo`, con `num_op="12345"`, `cantidad="12345"`, `descripcion="Tiempo Improductivo"`.
    - Para elegir el recurso que ya aparece seleccionado al principio, hay que cambiar antes a otro (no hay botón de confirmación).
-   - **Diálogo de éxito con `OP null`** [C por lectura estática; no reproducido en navegador] (E6, Fase 4): el texto es `` `OP ${ordenActual} · …` `` (`app.js:1202`). `ordenActual` solo vale `"12345"` si antes se pulsó *Marcar Tiempo Improductivo* (`SeleccionarRecurso`, `app.js:1107`); tras un éxito se pone a `null` (`app.js:1207`). El contenedor `#selectorRecursoTiempoImproductivo` **nunca se oculta ni se vacía** después del éxito (solo lo toca `prepararRecursosImproductivo`, `app.js:1118-1141`). Si el siguiente operario cambia directamente ese select, la apertura se ejecuta y el diálogo muestra `OP null` (u `OP [object Object]` si había buscado una OP productiva). El backend recibe siempre `num_op="12345"` fijo, así que **los datos guardados no se ven afectados**; es un defecto de presentación (R-31).
+   - **Diálogo de éxito con `OP null`** [C por lectura estática; no reproducido en navegador] (E6, Fase 4): el texto es `` `OP ${ordenActual} · …` `` (`app.js:1209`). `ordenActual` solo vale `"12345"` si antes se pulsó *Marcar Tiempo Improductivo* (`SeleccionarRecurso`, `app.js:1114`); tras un éxito se pone a `null` (`app.js:1214`). El contenedor `#selectorRecursoTiempoImproductivo` **nunca se oculta ni se vacía** después del éxito (solo lo toca `prepararRecursosImproductivo`, `app.js:1125-1148`). Si el siguiente operario cambia directamente ese select, la apertura se ejecuta y el diálogo muestra `OP null` (u `OP [object Object]` si había buscado una OP productiva). El backend recibe siempre `num_op="12345"` fijo, así que **los datos guardados no se ven afectados**; es un defecto de presentación (R-31).
 
 **Entrada tras pausa** (§5.2).
 
@@ -193,7 +193,7 @@ En Optimus no existen las actividades COMIDA/MANTO/… → `wo_number=0, tk_id=0
 10. Salvo el INSERT del operario (paso 6), **ningún resultado de INSERT/DELETE se comprueba.** La respuesta es `ok:true` (R-01).
 11. API: quita el marcaje de la memoria por `id` + WS.
 
-**Flujo posterior ARR** (v20.21, `app.js:358-469`, `841-849`):
+**Flujo posterior ARR** (v20.21, `app.js:365-476`, `841-849`):
 - Si `tipoCierre==="FINAL"` y el código de actividad contiene "ARR" (sin distinguir mayúsculas), se ofrece abrir el *tiraje* de la misma OP y recurso.
 - Se reconstruye la OP con `/api/op/buscar`, se valida que el recurso siga en la lista y el operario elige la actividad (flujo §2).
 - No hereda MAC, topic, tiempos ni cantidades.
@@ -224,7 +224,7 @@ En Optimus no existen las actividades COMIDA/MANTO/… → `wo_number=0, tk_id=0
 
 ### 5.2 Pausa por actividad improductiva (v20.22) [C]
 
-`app.js:471-586`, `cierres_service.py:497-501, 612-617`:
+`app.js:478-593`, `cierres_service.py:497-501, 612-617`:
 
 1. Botón *PAUSA POR ACTIVIDAD IMPRODUCTIVA* → exige `total_usuario`.
 2. Cierre **MD forzado** con `pausa_improductiva=true` → el INSERT lleva `variable01 = 1`.
@@ -233,7 +233,7 @@ En Optimus no existen las actividades COMIDA/MANTO/… → `wo_number=0, tk_id=0
 
 ### 5.3 Retorno tras improductivo (v20.23) [C]
 
-`app.js:588-751`, `cierres_service::obtener_ultimo_resumen_recurso_usuario` (58-102):
+`app.js:595-758`, `cierres_service::obtener_ultimo_resumen_recurso_usuario` (58-102):
 
 1. **Antes** de cerrar un marcaje con OP 12345: `SELECT * FROM resumenmarcajes WHERE recurso AND username ORDER BY tiempofinal DESC LIMIT 1`.
 2. Si ese registro tiene `variable01 = 1` y el cierre termina bien → se ofrece reabrir la OP y actividad anteriores con el flujo normal (`/api/op/buscar` → cotizadas → no cotizadas → `/iniciar-real-bd`).
@@ -252,13 +252,13 @@ En Optimus no existen las actividades COMIDA/MANTO/… → `wo_number=0, tk_id=0
 2. INSERT `estado='MT'`.
 3. **Borra `datossensados` de numOp+actividad+mac** y borra `marcajeactivo`.
 4. Devuelve `relevo_pendiente` (`cierres_service.py:926-946`). (2026-11-24) Lleva `wo_number`, `tk_id`, `estadoResolucion` y `tituloOt` de `valores` y ya no `num_ot`. La UI (`construirRelevoPendienteDesdeCierre`) copia esos 4 campos de `datos.valores`.
-5. La UI lo guarda **solo** en la variable JS `relevoMtPendiente` (`app.js:891-894`) y muestra el panel.
-6. El siguiente operario que se identifica **en esa misma pestaña** dispara `iniciarRelevoMtAutomatico({confirmar:false})` (`app.js:263-276`, `925-975`).
+5. La UI lo guarda **solo** en la variable JS `relevoMtPendiente` (`app.js:898-901`) y muestra el panel.
+6. El siguiente operario que se identifica **en esa misma pestaña** dispara `iniciarRelevoMtAutomatico({confirmar:false})` (`app.js:270-283`, `925-975`).
 7. Se llama a `POST /iniciar-relevo-mt-real` → `iniciar_relevo_mt_real_bd` (664-748).
 8. Esa función construye el payload y **reutiliza `iniciar_marcaje_real_bd`**: mismas validaciones, INSERT y **nueva publicación del inicio al ESP**.
    - (2026-11-24) **Hereda** la OT sin consultar Optimus (`_validar_resolucion_relevo`, que solo valida la forma): `AUTOMATICA`/`ELEGIDA` exigen `wo_number` y `tk_id` enteros positivos; `SIN_TAREA` exige vacíos (`0` cuenta como vacío, porque el cierre envía 0/0; decisión del usuario del 2026-11-24); estado ausente o nulo (marcaje antiguo) → todo `NULL`. Datos incoherentes o un estado desconocido → 409 `DATOS_RELEVO_INCOMPLETOS` sin efectos. Se pasan como `resolucion=` a `iniciar_marcaje_real_bd`.
 
-**Cómo se pierde el relevo**: recargar la página o pulsar *Cancelar*, identificarse en otra PC, o pulsar *Cancelar relevo* (`app.js:1007-1013`). En todos los casos:
+**Cómo se pierde el relevo**: recargar la página o pulsar *Cancelar*, identificarse en otra PC, o pulsar *Cancelar relevo* (`app.js:1014-1020`). En todos los casos:
 - La máquina sigue produciendo **sin marcaje**.
 - La máquina aparece **libre** y otro operario podría abrir otra OP en ella.
 - Los DATOS se siguen acumulando en `datossensados` bajo la misma numOp y actividad, y los heredará el siguiente marcaje que coincida [C mecanismo / I consecuencia].
@@ -277,8 +277,8 @@ En Optimus no existen las actividades COMIDA/MANTO/… → `wo_number=0, tk_id=0
 
 ## 7. Cierres desde las tarjetas del sidebar [C]
 
-- **"Cierre general"** (`app.js:1652-1656`, `1605-1616`): solo lanza la lectura de huella. Se cierra **el marcaje de quien pone la huella**, no el de la tarjeta.
-- **"Cierre SU/ADMIN"** (`app.js:1658-1662`, `1623-1648`): carga el objeto de la tarjeta como `marcajeActivoUsuario` sin huella. El INSERT usa el `username` del dueño del marcaje.
+- **"Cierre general"** (`app.js:1659-1663`, `1605-1616`): solo lanza la lectura de huella. Se cierra **el marcaje de quien pone la huella**, no el de la tarjeta.
+- **"Cierre SU/ADMIN"** (`app.js:1665-1669`, `1623-1648`): carga el objeto de la tarjeta como `marcajeActivoUsuario` sin huella. El INSERT usa el `username` del dueño del marcaje.
   - **No queda registro de quién cerró**: `usuarioFinalizacion` no se usa.
 
 ---

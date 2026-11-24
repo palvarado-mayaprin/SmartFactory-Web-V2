@@ -1,6 +1,6 @@
 # SmartFactory Web v2 — guía para Claude Code
 
-Sistema web de **marcajes de producción en planta** (Mayaprin). Los operarios se identifican con su huella y abren y cierran marcajes (operario + OP + recurso + actividad). Los sensores ESP envían conteos por MQTT. Al cerrar, se calcula la producción (`cantidadreal`) en MySQL `smartfactory.resumenmarcajes`. Sustituye a la app PyQt de `../src`. Versión 20.25.0.
+Sistema web de **marcajes de producción en planta** (Mayaprin). Los operarios se identifican con su huella y abren y cierran marcajes (operario + OP + recurso + actividad). Los sensores ESP envían conteos por MQTT. Al cerrar, se calcula la producción (`cantidadreal`) en MySQL `smartfactory.resumenmarcajes`. Sustituye a la app PyQt de `../src`. Versión 20.25.1.
 
 **Stack**:
 - Backend: Python 3.10 · FastAPI · uvicorn · paho-mqtt · mysql-connector.

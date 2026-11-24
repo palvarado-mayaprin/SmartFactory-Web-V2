@@ -155,20 +155,26 @@ async function elegirOtParaInicio(numOp, actividadCodigo, aviso = null) {
     }
 
     const ots = Array.isArray(datos.ots) ? datos.ots : [];
+    // v20.25.1: select con solo la descripción de la OT, mismo patrón y estilos que el
+    // selector de actividades no cotizadas (swal-actividad-popup / swal-actividad-select).
     const eleccion = await Swal.fire({
         icon: "question",
         title: "¿En qué parte de la orden trabaja?",
         html: aviso ? `<p><strong>${escaparHtml(aviso)}</strong></p>` : undefined,
-        input: "radio",
+        input: "select",
         inputOptions: construirOpcionesOt(ots),
-        inputValidator: (valor) => (valor ? undefined : "Elija una parte de la orden."),
+        inputPlaceholder: "Seleccione la parte de la orden",
         showCancelButton: true,
         confirmButtonText: "Continuar",
         cancelButtonText: "Volver",
-        reverseButtons: true
+        customClass: {
+            popup: "swal-actividad-popup",
+            input: "swal-actividad-select"
+        },
+        inputValidator: (valor) => (valor ? undefined : "Debe seleccionar una parte de la orden.")
     });
 
-    if (!eleccion.isConfirmed) {
+    if (!eleccion.isConfirmed || !eleccion.value) {
         return null;
     }
 
@@ -204,7 +210,8 @@ async function iniciarMarcajeRealConOt(cuerpo, numeroOt) {
 }
 
 function filaParte(numeroOt, titulo) {
-    return `<strong>Parte:</strong> ${etiquetaOt({ numeroOt, titulo })}<br>`;
+    // Solo la descripción; «OT n» únicamente si la OT no tiene título.
+    return `<strong>Parte:</strong> ${escaparHtml(textoOt({ numeroOt, titulo }))}<br>`;
 }
 
 async function identificarUsuario() {

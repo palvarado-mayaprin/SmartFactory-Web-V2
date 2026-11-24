@@ -50,7 +50,7 @@ Leyenda de **Efecto**: L = solo lectura · M = escribe en la memoria del proceso
 | `/ws/marcajes` (83-106) | `MARCAGES_ACTIVOS_ACTUALIZADOS` con la lista en memoria | `MARCAGES_ACTIVOS_ACTUALIZADOS` (`marcajes`, opcionalmente `marcaje`, `marcaje_cerrado`, `resultado_*`) | Endpoints de marcajes; `mqtt_service._broadcast_marcajes_desde_hilo` cuando un DATOS se asocia |
 | `/ws/mqtt` (109-131) | `MQTT_ESTADO` | `MQTT_ESTADO`, `MQTT_MENSAJE_RECIBIDO` (`mensaje`, `estado`, `asociacion`, `persistencia_simulada`) | `mqtt_service` |
 
-- [C] El tipo se escribe `MARCAGES` (con G). Es el contrato vigente con `app.js:1591`.
+- [C] El tipo se escribe `MARCAGES` (con G). Es el contrato vigente con `app.js:1598`.
 - [C] Los mensajes que envía el cliente se ignoran.
 - [C] El broadcast solo llega a los clientes conectados **a ese proceso**.
 - [C] Desde el hilo de paho se usa `asyncio.run_coroutine_threadsafe` con el loop capturado en `iniciar`.
